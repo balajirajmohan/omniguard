@@ -10,3 +10,13 @@ venv/
 .mypy_cache/
 .ruff_cache/
 .streamlit/secrets.toml
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/terraform.tfvars
+infra/terraform/omniguard-isaac.pem
+infra/terraform/crash.log
+infra/terraform/override.tf
+infra/terraform/*_override.tf

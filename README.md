@@ -23,6 +23,12 @@ Isaac adapter   Security dashboard
 Isaac Sim warehouse robot (Nova Carter)
 ```
 
+## Hackathon runbook
+
+**Start here for the full event path:** [docs/RUNBOOK.md](docs/RUNBOOK.md)
+
+AWS Isaac Sim workstation (Terraform): [infra/terraform/README.md](infra/terraform/README.md)
+
 ## Quick start (Mac — Checkpoint B, no Isaac required)
 
 ```bash
@@ -47,7 +53,18 @@ streamlit run dashboard/app.py
 
 ## Isaac Sim (Checkpoint A)
 
-See [docs/isaac-setup.md](docs/isaac-setup.md). Requires AWS `g6e.4xlarge` (L40S) — not available on macOS.
+Provision with Terraform (preferred):
+
+```bash
+# 1) Accept Marketplace terms:
+# https://aws.amazon.com/marketplace/pp/prodview-bl35herdyozhw
+# 2) Deploy
+cd infra/terraform
+cp terraform.tfvars.example terraform.tfvars   # set allowed_cidr_blocks + key
+terraform init && terraform apply
+```
+
+Also see [docs/isaac-setup.md](docs/isaac-setup.md) and [docs/RUNBOOK.md](docs/RUNBOOK.md). Requires AWS `g6e.4xlarge` (L40S) — not available on macOS.
 
 After the robot moves in simulation, wire [broker/isaac_adapter.py](broker/isaac_adapter.py) to Isaac Python scripting and enable with `OMNIGUARD_ISAAC_ENABLED=1`. Details: [docs/integration.md](docs/integration.md).
 

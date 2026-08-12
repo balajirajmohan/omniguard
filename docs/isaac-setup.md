@@ -19,7 +19,19 @@ macOS cannot run Isaac Sim locally. Use AWS.
 | TCP 49100 | WebRTC (if used) |
 | UDP 47998 | WebRTC (if used) |
 
-## 2. Provision the workstation
+## 2. Provision the workstation (Terraform)
+
+**Preferred:** use [infra/terraform](../infra/terraform) — see that README and [RUNBOOK.md](RUNBOOK.md) Phase 0.
+
+```bash
+# Accept Marketplace terms first:
+# https://aws.amazon.com/marketplace/pp/prodview-bl35herdyozhw
+cd infra/terraform
+cp terraform.tfvars.example terraform.tfvars
+# set allowed_cidr_blocks = ["YOUR.IP/32"] and create_key_pair = true
+terraform init && terraform apply
+bash ../../scripts/discover_isaac_ami.sh ap-south-1   # if AMI lookup fails
+```
 
 | Setting | Value |
 |---------|-------|
