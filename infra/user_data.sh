@@ -6,7 +6,7 @@ set -euxo pipefail
 exec > /var/log/omniguard-bootstrap.log 2>&1
 
 apt-get update
-apt-get install -y ubuntu-drivers-common build-essential python3.11 python3.11-venv git
+apt-get install -y ubuntu-drivers-common build-essential python3 python3-venv git
 
 ubuntu-drivers autoinstall
 
@@ -15,7 +15,7 @@ ubuntu-drivers autoinstall
 cat > /home/ubuntu/install_isaac_sim.sh <<'EOF'
 #!/bin/bash
 set -euxo pipefail
-python3.11 -m venv ~/isaac-sim-venv
+python3 -m venv ~/isaac-sim-venv
 source ~/isaac-sim-venv/bin/activate
 pip install --upgrade pip
 pip install "isaacsim[all]==6.0.0" --extra-index-url https://pypi.nvidia.com
