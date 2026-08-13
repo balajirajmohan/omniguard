@@ -1,0 +1,50 @@
+{
+  "name": "OmniGuard",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+
+  // Forward broker (FastAPI) and dashboard (Streamlit) ports
+  "forwardPorts": [8000, 8501],
+  "portsAttributes": {
+    "8000": {
+      "label": "Broker API",
+      "onAutoForward": "notify"
+    },
+    "8501": {
+      "label": "Dashboard UI",
+      "onAutoForward": "openBrowser"
+    }
+  },
+
+  // Mount the workspace into the container
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+
+  // Start broker + dashboard together on container start (background, single instance)
+  "postStartCommand": "bash -lc 'pgrep -f \"honcho start\" >/dev/null || (nohup honcho start >/tmp/honcho.log 2>&1 &)'",
+
+  // VS Code extensions
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.pylance",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff"
+        }
+      }
+    }
+  },
+
+  // Run as root
+  "remoteUser": "root"
+}

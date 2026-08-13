@@ -29,7 +29,41 @@ Isaac Sim warehouse robot (Nova Carter)
 
 AWS Isaac Sim workstation (Terraform): [infra/terraform/README.md](infra/terraform/README.md)
 
-## Quick start (Mac — Checkpoint B, no Isaac required)
+## Quick start (Checkpoint B, no Isaac required)
+
+### Option A — Dev Container (zero local setup)
+
+Open in [VS Code](https://code.visualstudio.com/) with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) or launch directly in [GitHub Codespaces](https://codespaces.new/balajirajmohan/omniguard):
+
+1. Open the repo in VS Code
+2. When prompted **"Reopen in Container"**, click it (or run **Dev Containers: Reopen in Container** from the command palette)
+3. The container builds, installs all deps, and runs `honcho start` automatically
+
+- **Broker API** → http://localhost:8000 *(forwarded automatically)*
+- **Dashboard UI** → http://localhost:8501 *(opens in browser automatically)*
+
+No Python, conda, or honcho installation needed on your machine.
+
+### Option B — single command with honcho (local)
+
+[honcho](https://honcho.readthedocs.io) reads the [`Procfile`](Procfile) and starts the broker + dashboard together in one terminal with colour-coded output.
+
+```bash
+# First time: create and activate a conda env, then install deps
+conda create -n omniguard python=3.11 -y
+conda activate omniguard
+pip install -r requirements.txt   # installs honcho too
+
+# Every time after: one command starts everything
+honcho start
+```
+
+- **Broker API** → http://localhost:8000
+- **Dashboard UI** → http://localhost:8501 *(open in browser)*
+
+Press `Ctrl+C` to stop all services at once.
+
+### Option C — manual terminals (fallback)
 
 ```bash
 python3 -m venv .venv
