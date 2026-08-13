@@ -33,7 +33,7 @@ AWS Isaac Sim workstation (Terraform): [infra/terraform/README.md](infra/terrafo
 
 ### Option A — Dev Container (zero local setup)
 
-Open in [VS Code](https://code.visualstudio.com/) with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) or launch directly in [GitHub Codespaces](https://codespaces.new/your-org/omniguard):
+Open in [VS Code](https://code.visualstudio.com/) with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) or launch directly in [GitHub Codespaces](https://codespaces.new/balajirajmohan/omniguard):
 
 1. Open the repo in VS Code
 2. When prompted **"Reopen in Container"**, click it (or run **Dev Containers: Reopen in Container** from the command palette)

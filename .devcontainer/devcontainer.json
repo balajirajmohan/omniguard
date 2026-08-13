@@ -22,8 +22,8 @@
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
 
-  // Start broker + dashboard together on container start
-  "postStartCommand": "honcho start",
+  // Start broker + dashboard together on container start (background, single instance)
+  "postStartCommand": "bash -lc 'pgrep -f \"honcho start\" >/dev/null || (nohup honcho start >/tmp/honcho.log 2>&1 &)'",
 
   // VS Code extensions
   "customizations": {
@@ -45,6 +45,6 @@
     }
   },
 
-  // Run as non-root for security
+  // Run as root
   "remoteUser": "root"
 }
