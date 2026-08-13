@@ -21,6 +21,32 @@ moment something looks like a compromise.
 
 ## Run the broker + demo locally (no Isaac Sim required)
 
+### Option A — Dev Container (zero local setup)
+
+Open in [VS Code](https://code.visualstudio.com/) with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers), or launch in GitHub Codespaces:
+
+1. Open the repo in VS Code.
+2. When prompted **"Reopen in Container"**, click it (or run **Dev Containers: Reopen in Container** from the command palette).
+3. The container builds, installs dependencies, and runs `honcho start` automatically via `.devcontainer/devcontainer.json`.
+
+- **Broker API** → http://localhost:8000 *(forwarded automatically)*
+- **Dashboard UI** → http://localhost:8501 *(opens in browser automatically)*
+
+### Option B — one command with honcho (local)
+
+[honcho](https://honcho.readthedocs.io) reads the [`Procfile`](Procfile) and starts the broker + dashboard together with colour-coded output.
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt   # installs honcho too
+
+honcho start
+```
+
+Press `Ctrl+C` to stop both services at once.
+
+### Option C — manual terminals
+
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
