@@ -1,18 +1,13 @@
-"""IsolationForest behavioural anomaly detector for robot commands.
-
-Hard safety rules remain authoritative. This model supplies an unknown-threat
-signal for command behaviour that is atypical for a fleet identity even when
-no explicit rule fires.
-
-Fail-safe: if the artifact is missing or fails to load, a small in-memory
-baseline is trained and status reports degraded=True.
-"""
+"""IsolationForest behavioural anomaly detector with artifact integrity checks."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
+import sys
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -36,9 +31,16 @@ DEFAULT_META_PATH = ROOT / "artifacts" / "command_anomaly_meta.json"
 
 
 def risk_from_raw(raw: float) -> float:
-    # IsolationForest: lower/negative = more anomalous. Map to 0..1 risk.
     risk = 1.0 / (1.0 + math.exp(25.0 * (raw - 0.05)))
     return round(max(0.01, min(0.99, risk)), 2)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class CommandAnomalyDetector:
@@ -58,6 +60,9 @@ class CommandAnomalyDetector:
         self.n_training_samples = 0
         self.degraded = False
         self.available = True
+        self.artifact_verified = False
+        self.artifact_sha256: str | None = None
+        self.load_error: str | None = None
         self.critical_threshold = float(os.getenv("OMNIGUARD_AI_CRITICAL", "0.80"))
         self.warning_threshold = float(os.getenv("OMNIGUARD_AI_WARNING", "0.60"))
         self.meta: dict[str, Any] = {}
@@ -85,20 +90,37 @@ class CommandAnomalyDetector:
         model.fit(normal)
         self.n_training_samples = n
         self.degraded = True
+        self.artifact_verified = False
         self.model_version = MODEL_VERSION_FALLBACK
         return model
+
+    def _validate_schema(self) -> None:
+        names = list(self.meta.get("feature_names", FEATURE_NAMES))
+        if names != FEATURE_NAMES:
+            raise ValueError(
+                f"feature schema mismatch: expected {FEATURE_NAMES}, got {names}"
+            )
+        if len(names) != len(FEATURE_NAMES):
+            raise ValueError("feature count mismatch")
 
     def _load_or_bootstrap(self) -> None:
         try:
             import joblib
 
+            trusted_root = (ROOT / "artifacts").resolve()
+            model_resolved = self.model_path.resolve()
+            if trusted_root not in model_resolved.parents and model_resolved.parent != trusted_root:
+                raise ValueError("model path must be under repository artifacts/")
+
             if self.model_path.exists():
-                self.model = joblib.load(self.model_path)
+                self.artifact_sha256 = sha256_file(self.model_path)
                 if self.meta_path.exists():
                     self.meta = json.loads(self.meta_path.read_text())
-                    self.feature_names = list(
-                        self.meta.get("feature_names", FEATURE_NAMES)
-                    )
+                    self._validate_schema()
+                    expected = self.meta.get("model_sha256")
+                    if expected and expected != self.artifact_sha256:
+                        raise ValueError("model checksum mismatch")
+                    self.feature_names = list(FEATURE_NAMES)
                     self.model_version = str(
                         self.meta.get("model_version", MODEL_VERSION_FALLBACK)
                     )
@@ -115,10 +137,26 @@ class CommandAnomalyDetector:
                             "warning_risk_threshold", self.warning_threshold
                         )
                     )
+
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message="Setting the shape on a NumPy array has been deprecated",
+                        category=DeprecationWarning,
+                    )
+                    self.model = joblib.load(self.model_path)
+
+                n_features = getattr(self.model, "n_features_in_", len(FEATURE_NAMES))
+                if int(n_features) != len(FEATURE_NAMES):
+                    raise ValueError(
+                        f"model expects {n_features} features, schema has {len(FEATURE_NAMES)}"
+                    )
                 self.degraded = False
+                self.artifact_verified = True
                 return
-        except Exception:
-            pass
+            self.load_error = "artifact missing"
+        except Exception as exc:  # noqa: BLE001
+            self.load_error = str(exc)
         self.model = self._bootstrap_inline()
 
     def score(
@@ -158,11 +196,7 @@ class CommandAnomalyDetector:
                 "raw_score": None,
             }
 
-        features = dict(zip(self.feature_names, values.tolist(), strict=False))
-        # Pad/trim if schema drift
-        if len(features) != len(FEATURE_NAMES):
-            features = dict(zip(FEATURE_NAMES, values.tolist(), strict=True))
-
+        features = dict(zip(FEATURE_NAMES, values.tolist(), strict=True))
         info = {
             "ai_anomalous": bool(pred == -1 or risk >= self.critical_threshold),
             "ai_unavailable": False,
@@ -172,6 +206,7 @@ class CommandAnomalyDetector:
             "critical_threshold": self.critical_threshold,
             "warning_threshold": self.warning_threshold,
             "degraded": self.degraded,
+            "artifact_verified": self.artifact_verified,
             "n_training_samples": self.n_training_samples,
         }
         return risk, features, info
@@ -180,6 +215,9 @@ class CommandAnomalyDetector:
         return {
             "available": self.available,
             "degraded": self.degraded,
+            "artifact_verified": self.artifact_verified,
+            "artifact_sha256": self.artifact_sha256,
+            "load_error": self.load_error,
             "model_name": "IsolationForest",
             "model_version": self.model_version,
             "n_training_samples": self.n_training_samples,
@@ -188,10 +226,17 @@ class CommandAnomalyDetector:
             "warning_threshold": self.warning_threshold,
             "artifact": str(self.model_path),
             "artifact_present": self.model_path.exists(),
+            "dataset_label": "synthetic_normal_commands_only",
+            "runtime_versions": {
+                "python": sys.version.split()[0],
+                "numpy": np.__version__,
+            },
+            "eval_metrics": self.meta.get("eval_metrics"),
             "controls_robot": False,
             "judge_note": (
-                "Trained only on normal operations. Attack labels evaluate "
-                "detection; they do not teach every possible attack."
+                "IsolationForest is trained only on synthetic normal fleet behavior. "
+                "Attack samples are used for demonstration and evaluation, not to "
+                "teach every attack."
             ),
         }
 

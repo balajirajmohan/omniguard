@@ -45,67 +45,51 @@ def generate_normal(n: int, seed: int = 42) -> pd.DataFrame:
 
 
 def generate_eval(seed: int = 7) -> pd.DataFrame:
-    """Labeled evaluation scenarios (not used for IsolationForest fit)."""
-    rows = [
-        # Should look normal
-        {
-            "speed": 0.8,
-            "known_device": 1,
-            "restricted_destination": 0,
-            "commands_last_10_seconds": 1,
-            "previous_failures": 0,
-            "hour_of_day": 10,
-            "seconds_since_last_command": 40,
-            "label": 0,
-            "scenario": "eval_normal",
-        },
-        # Known compromise (rules would also catch)
-        {
-            "speed": 3.5,
-            "known_device": 0,
-            "restricted_destination": 1,
-            "commands_last_10_seconds": 8,
-            "previous_failures": 3,
-            "hour_of_day": 2,
-            "seconds_since_last_command": 1,
-            "label": 1,
-            "scenario": "known_compromise",
-        },
-        # Unknown / zero-day behavior: all hard rules pass
-        {
-            "speed": 1.45,
-            "known_device": 1,
-            "restricted_destination": 0,
-            "commands_last_10_seconds": 10,
-            "previous_failures": 4,
-            "hour_of_day": 3,
-            "seconds_since_last_command": 1.5,
-            "label": 1,
-            "scenario": "behavioral_anomaly",
-        },
-        {
-            "speed": 1.4,
-            "known_device": 1,
-            "restricted_destination": 0,
-            "commands_last_10_seconds": 9,
-            "previous_failures": 3,
-            "hour_of_day": 2,
-            "seconds_since_last_command": 2.0,
-            "label": 1,
-            "scenario": "behavioral_anomaly_alt",
-        },
-        {
-            "speed": 1.35,
-            "known_device": 1,
-            "restricted_destination": 0,
-            "commands_last_10_seconds": 11,
-            "previous_failures": 5,
-            "hour_of_day": 23,
-            "seconds_since_last_command": 1.0,
-            "label": 1,
-            "scenario": "off_hours_burst",
-        },
+    """Labeled evaluation scenarios (not used for IsolationForest fit).
+
+    Includes synthetic normals plus hand-crafted attack demonstrations.
+    This is demo/evaluation evidence — not production-grade validation.
+    """
+    rng = np.random.default_rng(seed)
+    rows: list[dict] = []
+    for i in range(40):
+        rows.append(
+            {
+                "speed": float(rng.uniform(0.45, 1.05)),
+                "known_device": 1,
+                "restricted_destination": 0,
+                "commands_last_10_seconds": int(rng.integers(0, 4)),
+                "previous_failures": int(rng.integers(0, 2)),
+                "hour_of_day": int(rng.integers(8, 19)),
+                "seconds_since_last_command": float(rng.uniform(10.0, 90.0)),
+                "label": 0,
+                "scenario": f"eval_normal_{i}",
+            }
+        )
+    attack_templates = [
+        ("known_compromise", 3.5, 0, 1, 8, 3, 2, 1.0, 1),
+        ("behavioral_anomaly", 1.45, 1, 0, 10, 4, 3, 1.5, 1),
+        ("behavioral_anomaly_alt", 1.4, 1, 0, 9, 3, 2, 2.0, 1),
+        ("off_hours_burst", 1.35, 1, 0, 11, 5, 23, 1.0, 1),
+        ("speed_creep", 1.48, 1, 0, 7, 2, 22, 2.5, 1),
+        ("burst_day", 1.2, 1, 0, 14, 4, 14, 1.2, 1),
+        ("failure_streak", 1.3, 1, 0, 6, 6, 4, 3.0, 1),
+        ("rogue_combo", 2.8, 0, 1, 9, 4, 1, 1.0, 1),
     ]
+    for name, speed, known, restricted, cmds, fails, hour, gap, label in attack_templates:
+        rows.append(
+            {
+                "speed": speed,
+                "known_device": known,
+                "restricted_destination": restricted,
+                "commands_last_10_seconds": cmds,
+                "previous_failures": fails,
+                "hour_of_day": hour,
+                "seconds_since_last_command": gap,
+                "label": label,
+                "scenario": name,
+            }
+        )
     return pd.DataFrame(rows)
 
 
