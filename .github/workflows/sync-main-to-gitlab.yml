@@ -1,0 +1,65 @@
+name: Sync main to GitLab
+
+on:
+    push:
+        branches:
+            - main
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: sync-main-to-gitlab
+    cancel-in-progress: true
+
+jobs:
+    sync:
+        name: Force-sync GitHub main to GitLab main
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Check out GitHub main
+              uses: actions/checkout@v4
+              with:
+                  ref: main
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            - name: Push main to GitLab
+              shell: bash
+              env:
+                  GITLAB_PROJECT_ACCESS_TOKEN: ${{ secrets.GITLAB_PROJECT_ACCESS_TOKEN }}
+              run: |
+                  set -euo pipefail
+
+                  if [[ -z "${GITLAB_PROJECT_ACCESS_TOKEN:-}" ]]; then
+                    echo "::error::The GITLAB_PROJECT_ACCESS_TOKEN repository secret is not configured."
+                    exit 1
+                  fi
+
+                  GIT_ASKPASS="${RUNNER_TEMP}/gitlab-askpass.sh"
+                  export GIT_ASKPASS
+                  export GIT_TERMINAL_PROMPT=0
+                  trap 'rm -f "${GIT_ASKPASS}"' EXIT
+
+                  cat > "${GIT_ASKPASS}" <<'ASKPASS'
+                  #!/bin/sh
+                  case "$1" in
+                    *Username*) printf '%s\n' 'oauth2' ;;
+                    *Password*) printf '%s\n' "$GITLAB_PROJECT_ACCESS_TOKEN" ;;
+                    *) exit 1 ;;
+                  esac
+                  ASKPASS
+                  chmod 700 "${GIT_ASKPASS}"
+
+                  GITLAB_URL="https://gitlab.presidio.com/omniguard/omniguard.git"
+                  gitlab_main_oid="$(
+                    git ls-remote "${GITLAB_URL}" "refs/heads/main" |
+                      awk 'NR == 1 { print $1 }'
+                  )"
+
+                  git push \
+                    --force-with-lease="refs/heads/main:${gitlab_main_oid}" \
+                    "${GITLAB_URL}" \
+                    "HEAD:refs/heads/main"
