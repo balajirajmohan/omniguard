@@ -102,6 +102,58 @@ waypoint. If using the legacy composite path and a mount cannot be discovered,
 copy the available prim path from the emitted diagnostic into the relevant
 override above.
 
+### Bridge-local arm/gripper curl checks
+
+The Isaac bridge also exposes direct arm and gripper commands for GPU smoke tests.
+These are bridge-local endpoints on `:8899`; the browser UI intentionally still
+does not call them directly.
+
+```bash
+curl -sS -X POST http://127.0.0.1:8899/arm/preset \
+  -H 'Content-Type: application/json' \
+  -H "X-OmniGuard-Bridge-Token: ${ISAAC_BRIDGE_TOKEN}" \
+  -d '{"robot_id":"robot-01","preset":"reach"}'
+
+curl -sS -X POST http://127.0.0.1:8899/arm/preset \
+  -H 'Content-Type: application/json' \
+  -H "X-OmniGuard-Bridge-Token: ${ISAAC_BRIDGE_TOKEN}" \
+  -d '{"robot_id":"robot-01","preset":"stow"}'
+
+curl -sS -X POST http://127.0.0.1:8899/gripper \
+  -H 'Content-Type: application/json' \
+  -H "X-OmniGuard-Bridge-Token: ${ISAAC_BRIDGE_TOKEN}" \
+  -d '{"robot_id":"robot-01","action":"open"}'
+
+curl -sS -X POST http://127.0.0.1:8899/gripper \
+  -H 'Content-Type: application/json' \
+  -H "X-OmniGuard-Bridge-Token: ${ISAAC_BRIDGE_TOKEN}" \
+  -d '{"robot_id":"robot-01","action":"close"}'
+```
+
+For explicit joint targets:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8899/arm/joints \
+  -H 'Content-Type: application/json' \
+  -H "X-OmniGuard-Bridge-Token: ${ISAAC_BRIDGE_TOKEN}" \
+  -d '{
+    "robot_id":"robot-01",
+    "targets_degrees":{
+      "panda_joint1":0,
+      "panda_joint2":-35,
+      "panda_joint3":0,
+      "panda_joint4":-90,
+      "panda_joint5":0,
+      "panda_joint6":60,
+      "panda_joint7":20
+    }
+  }'
+```
+
+Supported presets are `stow`, `carry`, `reach`, and `inspect`. If a catalog
+asset exposes different joint names, `warehouse_robot_demo.py` logs the detected
+joint paths when a command cannot be applied.
+
 ## Laptop poll contract (optional)
 
 [`simulator/isaac_bridge.py`](../simulator/isaac_bridge.py) mirrors `fake_robot.py` for poll/telemetry. The proven push path uses `OMNIGUARD_ROBOT_BACKEND=isaac` → Srikanth's `IsaacRobotController` against `:8899`.

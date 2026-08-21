@@ -20,6 +20,11 @@ MAX_BODY_BYTES = 4096
 MAX_COORD = 1000.0
 MAX_SPEED = 5.0
 MIN_SPEED = 0.0
+MAX_JOINT_TARGETS = 16
+MIN_JOINT_DEGREES = -180.0
+MAX_JOINT_DEGREES = 180.0
+ARM_PRESETS = {"stow", "carry", "reach", "inspect"}
+GRIPPER_ACTIONS = {"open", "close"}
 
 
 def _is_loopback(host: str) -> bool:
@@ -36,6 +41,30 @@ def _finite_number(value: Any, name: str) -> float:
     if not math.isfinite(number):
         raise ValueError(f"{name} must be finite")
     return number
+
+
+def _required_robot_id(data: dict[str, Any]) -> str:
+    robot_id = data.get("robot_id")
+    if not isinstance(robot_id, str) or not robot_id.strip():
+        raise ValueError("robot_id required")
+    return robot_id.strip()
+
+
+def _parse_joint_targets(data: dict[str, Any]) -> dict[str, float]:
+    raw = data.get("targets_degrees")
+    if not isinstance(raw, dict) or not raw:
+        raise ValueError("targets_degrees must be a non-empty object")
+    if len(raw) > MAX_JOINT_TARGETS:
+        raise ValueError(f"targets_degrees supports at most {MAX_JOINT_TARGETS} joints")
+    targets: dict[str, float] = {}
+    for name, value in raw.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("joint names must be non-empty strings")
+        target = _finite_number(value, f"targets_degrees.{name}")
+        if target < MIN_JOINT_DEGREES or target > MAX_JOINT_DEGREES:
+            raise ValueError(f"targets_degrees.{name} out of range")
+        targets[name.strip()] = target
+    return targets
 
 
 class CommandBridge:
@@ -62,6 +91,9 @@ class CommandBridge:
 
         self._lock = threading.Lock()
         self._moves: dict[str, dict] = {}
+        self._arm_presets: dict[str, dict] = {}
+        self._arm_joints: dict[str, dict] = {}
+        self._grippers: dict[str, dict] = {}
         self._stops: set[str] = set()
         self._commands: dict[str, dict[str, Any]] = {}
         self._robot_state: dict[str, Any] = {
@@ -151,11 +183,8 @@ class CommandBridge:
                         return
                     data = self._read_json()
                     if self.path == "/move":
-                        robot_id = data.get("robot_id")
-                        if not isinstance(robot_id, str) or not robot_id.strip():
-                            self._reply(400, {"error": "robot_id required"})
-                            return
                         try:
+                            robot_id = _required_robot_id(data)
                             x = _finite_number(data.get("x"), "x")
                             y = _finite_number(data.get("y"), "y")
                             speed = _finite_number(data.get("speed"), "speed")
@@ -194,15 +223,95 @@ class CommandBridge:
                                 "command_id": command_id,
                             },
                         )
+                    elif self.path == "/arm/preset":
+                        try:
+                            robot_id = _required_robot_id(data)
+                            preset = data.get("preset")
+                            if not isinstance(preset, str) or preset.strip().lower() not in ARM_PRESETS:
+                                raise ValueError(
+                                    "preset must be one of: " + ", ".join(sorted(ARM_PRESETS))
+                                )
+                            preset = preset.strip().lower()
+                        except ValueError as exc:
+                            self._reply(400, {"error": str(exc)})
+                            return
+                        command_id = str(uuid.uuid4())
+                        with bridge._lock:
+                            bridge._arm_presets[robot_id] = {
+                                "preset": preset,
+                                "command_id": command_id,
+                            }
+                            bridge._commands[command_id] = {
+                                "command_id": command_id,
+                                "type": "arm_preset",
+                                "robot_id": robot_id,
+                                "status": "QUEUED",
+                                "preset": preset,
+                            }
+                            bridge._robot_state["last_command_id"] = command_id
+                        self._reply(200, {"status": "QUEUED", "command_id": command_id})
+                    elif self.path == "/arm/joints":
+                        try:
+                            robot_id = _required_robot_id(data)
+                            targets = _parse_joint_targets(data)
+                        except ValueError as exc:
+                            self._reply(400, {"error": str(exc)})
+                            return
+                        command_id = str(uuid.uuid4())
+                        with bridge._lock:
+                            bridge._arm_joints[robot_id] = {
+                                "targets_degrees": targets,
+                                "command_id": command_id,
+                            }
+                            bridge._commands[command_id] = {
+                                "command_id": command_id,
+                                "type": "arm_joints",
+                                "robot_id": robot_id,
+                                "status": "QUEUED",
+                                "targets_degrees": targets,
+                            }
+                            bridge._robot_state["last_command_id"] = command_id
+                        self._reply(200, {"status": "QUEUED", "command_id": command_id})
+                    elif self.path == "/gripper":
+                        try:
+                            robot_id = _required_robot_id(data)
+                            action = data.get("action")
+                            if not isinstance(action, str) or action.strip().lower() not in GRIPPER_ACTIONS:
+                                raise ValueError(
+                                    "action must be one of: " + ", ".join(sorted(GRIPPER_ACTIONS))
+                                )
+                            action = action.strip().lower()
+                        except ValueError as exc:
+                            self._reply(400, {"error": str(exc)})
+                            return
+                        command_id = str(uuid.uuid4())
+                        with bridge._lock:
+                            bridge._grippers[robot_id] = {
+                                "action": action,
+                                "command_id": command_id,
+                            }
+                            bridge._commands[command_id] = {
+                                "command_id": command_id,
+                                "type": "gripper",
+                                "robot_id": robot_id,
+                                "status": "QUEUED",
+                                "action": action,
+                            }
+                            bridge._robot_state["last_command_id"] = command_id
+                        self._reply(200, {"status": "QUEUED", "command_id": command_id})
                     elif self.path == "/stop":
-                        robot_id = data.get("robot_id")
-                        if not isinstance(robot_id, str) or not robot_id.strip():
-                            self._reply(400, {"error": "robot_id required"})
+                        try:
+                            robot_id = _required_robot_id(data)
+                        except ValueError as exc:
+                            self._reply(400, {"error": str(exc)})
                             return
                         command_id = str(uuid.uuid4())
                         with bridge._lock:
                             bridge._stops.add(robot_id)
                             bridge._moves.pop(robot_id, None)
+                            bridge._arm_presets.pop(robot_id, None)
+                            bridge._arm_joints.pop(robot_id, None)
+                            bridge._grippers.pop(robot_id, None)
                             bridge._commands[command_id] = {
                                 "command_id": command_id,
                                 "type": "stop",
@@ -240,6 +349,18 @@ class CommandBridge:
     def pop_move(self, robot_id: str) -> dict | None:
         with self._lock:
             return self._moves.pop(robot_id, None)
+
+    def pop_arm_preset(self, robot_id: str) -> dict | None:
+        with self._lock:
+            return self._arm_presets.pop(robot_id, None)
+
+    def pop_arm_joints(self, robot_id: str) -> dict | None:
+        with self._lock:
+            return self._arm_joints.pop(robot_id, None)
+
+    def pop_gripper(self, robot_id: str) -> dict | None:
+        with self._lock:
+            return self._grippers.pop(robot_id, None)
 
     def pop_stop(self, robot_id: str) -> dict | None:
         """Return stop command payload if pending (prioritized by caller)."""
