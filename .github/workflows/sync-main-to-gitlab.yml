@@ -54,6 +54,13 @@ jobs:
                   ASKPASS
                   chmod 700 "${GIT_ASKPASS}"
 
-                  git push --force-with-lease \
-                    "https://gitlab.presidio.com/omniguard/omniguard.git" \
+                  GITLAB_URL="https://gitlab.presidio.com/omniguard/omniguard.git"
+                  gitlab_main_oid="$(
+                    git ls-remote "${GITLAB_URL}" "refs/heads/main" |
+                      awk 'NR == 1 { print $1 }'
+                  )"
+
+                  git push \
+                    --force-with-lease="refs/heads/main:${gitlab_main_oid}" \
+                    "${GITLAB_URL}" \
                     "HEAD:refs/heads/main"
