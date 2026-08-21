@@ -1,61 +1,40 @@
-# OmniGuard Demo Script (one page)
+# OmniGuard Demo Script (3 minutes)
 
-**Pitch line:** NVIDIA helps customers test whether robots work. OmniGuard tests what happens when the identities controlling those robots are compromised.
+**Pitch:** In IT, a stolen credential exposes data. In physical AI, it can move machinery. OmniGuard proves dangerous identity misuse is contained inside an NVIDIA digital twin before real robots or people are at risk.
 
-## Setup (2 minutes)
-
-1. Start the broker: `uvicorn broker.main:app --reload --port 8000`
-2. Optional dashboard: `streamlit run dashboard/app.py`
-3. Reset state: `curl -X POST http://127.0.0.1:8000/demo/reset`
-
-## Demo flow (3 minutes)
-
-### 1. Normal operator (safe)
+## Setup
 
 ```bash
-python clients/normal_client.py
+bash scripts/run_demo.sh
+# Dashboard http://127.0.0.1:8501
 ```
 
-**Say:** A valid fleet agent on the bound controller moves `robot-01` Zone A → Zone B.
+## Act 1 — Normal
 
-**Show:** Decision `ALLOW`, robot status `MOVING` / zone `ZONE_B`.
+Click **Normal Operation**.
 
-### 2. Attack without OmniGuard (story beat)
+> Known fleet identity and controller request Zone B at normal speed. Policy and behaviour look expected, so the command is allowed.
 
-**Say:** The same stolen JWT is valid. Without contextual guardrails, the attacker sends the robot into `HUMAN_ZONE` from `rogue-controller` — a cyber event becomes a physical near-miss.
+Show: `ALLOW`, robot moves / arrives `SAFE_ZONE_B`.
 
-*(On Isaac: optionally show the unsafe path once with the broker bypassed / adapter direct.)*
+## Act 2 — Unprotected
 
-### 3. Attack with OmniGuard (winning moment)
+Click **Reset**, then **Attack — Protection OFF**.
 
-```bash
-python clients/attack_client.py --reuse
-```
+> The attacker reuses a *valid* agent credential from a rogue device toward a restricted human zone at excessive speed. Traditional authentication would accept it — the robot begins unsafe movement.
 
-**Say:** Token signature is still valid — but OmniGuard sees device mismatch + restricted-zone intent.
+Show: `ALLOW` with `BYPASSED`, fake robot prints danger / enters `RESTRICTED_ZONE`.
 
-**Show:**
+## Act 3 — OmniGuard ON
 
-- Decision `DENY`
-- Reasons: `device_mismatch`, `human_zone_breach` / `zone_forbidden`
-- Credential `jti` revoked, identity quarantined
-- Robot action `STUB_ESTOP` / contained
-- Incident card: *Critical: Credential compromise detected*
+Click **Reset**, then **Attack — OmniGuard ON**.
 
-### 4. Blocked reuse
+> Same valid credential, but OmniGuard sees unknown device, restricted destination and abnormal speed/behaviour. It blocks the command, stops the robot, revokes the credential and quarantines the agent.
 
-The `--reuse` flag immediately resends the same token.
-
-**Show:** Second `DENY` (`token_revoked` or `identity_quarantined`). Containment sticks.
+Show: `BLOCK`, risk score, revoke/quarantine, incident analyst text.
 
 ## Close
 
-> Omniverse gives us the physically accurate world. OmniGuard turns it into a cyber-physical red-team range — inject the attack, measure blast radius, validate guardrails, produce evidence the fleet is safe to deploy.
-
-## Reset between rehearsals
-
-```bash
-curl -X POST http://127.0.0.1:8000/demo/reset
-```
-
-Run the exact demo at least five times. Record a backup video once A+B are green on Isaac.
+> NVIDIA provides the physically accurate digital twin. OmniGuard turns it into a cyber-physical red-team and pre-deployment security assurance range.
+>
+> AI detects and explains. Deterministic code performs the safety-critical block, stop and revocation.

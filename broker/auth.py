@@ -1,17 +1,14 @@
-import time
-import uuid
-
-import jwt
-
 import os
 import time
 import uuid
 
 import jwt
 
-# Demo-only secret. In a real deployment this comes from a secret manager,
-# and the algorithm would likely be RS256 with per-issuer key rotation.
-SECRET_KEY = os.environ.get("OMNIGUARD_JWT_SECRET", "omniguard-hackathon-demo-secret")
+# Demo-only secret. Prefer OMNIGUARD_JWT_SECRET in any shared environment.
+SECRET_KEY = os.environ.get(
+    "OMNIGUARD_JWT_SECRET",
+    "omniguard-hackathon-demo-secret-32b",  # demo default; override via env
+)
 ALGORITHM = "HS256"
 
 

@@ -12,7 +12,14 @@ from broker.state import state
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("omniguard.broker")
 
-app = FastAPI(title="OmniGuard Broker")
+app = FastAPI(
+    title="OmniGuard JWT Broker",
+    description=(
+        "Srikanth's JWT Zero-Trust broker with mock/Isaac robot adapter. "
+        "For the four-button hackathon demo, prefer backend.main:app on :8000."
+    ),
+    version="0.1.1",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,7 +32,7 @@ robot = get_robot_controller()
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "service": "omniguard-jwt-broker"}
 
 
 @app.post("/token")
@@ -49,25 +56,62 @@ def submit_command(request: CommandRequest):
     result = evaluate(request)
 
     incident_id = None
+    actually_contained = False
 
     if result.allow:
-        robot.move_to(request.robot_id, request.target_x, request.target_y, request.speed)
-        state.set_robot_state(
-            request.robot_id,
-            position=[request.target_x, request.target_y],
-            speed=request.speed,
-            zone=request.target_zone,
-            status="MOVING",
-            last_identity=result.identity,
+        previous = state.snapshot().get("robot_state", {}).get(request.robot_id, {})
+        moved = robot.move_to(
+            request.robot_id, request.target_x, request.target_y, request.speed
         )
+        if moved:
+            state.set_robot_state(
+                request.robot_id,
+                position=[request.target_x, request.target_y],
+                speed=request.speed,
+                zone=request.target_zone,
+                status="MOVING",
+                last_identity=result.identity,
+                actuation_ok=True,
+            )
+        else:
+            # Keep last known pose; do not pretend we arrived.
+            state.set_robot_state(
+                request.robot_id,
+                position=previous.get("position"),
+                speed=0.0,
+                zone=previous.get("zone"),
+                status="MOVE_FAILED",
+                last_identity=result.identity,
+                actuation_ok=False,
+            )
+            logger.error("ALLOW issued but robot actuation failed for %s", request.robot_id)
     else:
         if result.contained:
             if result.jti:
                 state.revoke(result.jti)
             if result.identity:
                 state.quarantine(result.identity)
-            robot.emergency_stop(request.robot_id)
-            state.set_robot_state(request.robot_id, status="CONTAINED")
+            stopped = robot.emergency_stop(request.robot_id)
+            actually_contained = bool(stopped)
+            state.set_robot_state(
+                request.robot_id,
+                status="CONTAINED" if stopped else "CONTAINMENT_FAILED",
+                speed=0.0,
+                actuation_ok=stopped,
+            )
+            if not stopped:
+                logger.error(
+                    "Containment requested but e-stop failed for %s", request.robot_id
+                )
+
+        if result.contained and actually_contained:
+            contain_msg = ", credential revoked and robot contained."
+        elif result.contained and not actually_contained:
+            contain_msg = (
+                ", credential revoked but robot e-stop FAILED — operator intervention required."
+            )
+        else:
+            contain_msg = "."
 
         incident = state.record_incident(
             identity=result.identity or "unknown",
@@ -78,10 +122,9 @@ def submit_command(request: CommandRequest):
             message=(
                 f"{result.identity or 'unknown identity'} attempted to move "
                 f"{request.robot_id} into {request.target_zone} from device "
-                f"'{request.device_id}'. Command blocked"
-                + (", credential revoked and robot contained." if result.contained else ".")
+                f"'{request.device_id}'. Command blocked{contain_msg}"
             ),
-            contained=result.contained,
+            contained=actually_contained if result.contained else False,
         )
         incident_id = incident["incident_id"]
         logger.warning("DENY %s: %s", request.robot_id, result.reason)

@@ -1,17 +1,14 @@
-"""Attack scenario: a technically valid stolen token replayed from a rogue
-controller, requesting movement into the restricted HUMAN_ZONE.
+"""Attack scenario: stolen valid token from rogue controller → HUMAN_ZONE.
 
-Run scripts/normal_client.py first (or this script) to have a live token to
-steal — in a real attack the token would be exfiltrated from the legitimate
-controller's memory/logs/network traffic. Here we just mint one directly to
-stand in for that theft, since demonstrating exfiltration itself is out of
-scope for the MVP.
+Targets Srikanth's JWT broker (default :8001). Start it with:
+  bash scripts/run_jwt_broker.sh
 """
+import os
 import uuid
 
 import requests
 
-BROKER_URL = "http://localhost:8000"
+BROKER_URL = os.getenv("BROKER_URL", "http://127.0.0.1:8001")
 
 STOLEN_TOKEN_CLAIMS = {
     "sub": "fleet-agent-01",

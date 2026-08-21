@@ -1,9 +1,14 @@
-"""Fleet agent behaving normally: valid token, correct device, permitted zone."""
+"""Fleet agent behaving normally: valid token, correct device, permitted zone.
+
+Targets Srikanth's JWT broker (default :8001). Start it with:
+  bash scripts/run_jwt_broker.sh
+"""
+import os
 import uuid
 
 import requests
 
-BROKER_URL = "http://localhost:8000"
+BROKER_URL = os.getenv("BROKER_URL", "http://127.0.0.1:8001")
 
 FLEET_AGENT_CLAIMS = {
     "sub": "fleet-agent-01",

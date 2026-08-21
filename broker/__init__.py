@@ -1,3 +1,1 @@
-"""OmniGuard identity broker — contextual AuthZ for physical AI fleets."""
-
-__version__ = "0.1.0"
+"""OmniGuard JWT broker package (Srikanth) — preserved for GPU/Isaac push path."""

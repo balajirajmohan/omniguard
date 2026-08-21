@@ -1,89 +1,85 @@
 # OmniGuard
 
-A security broker for robot fleet commands. A robot control token can be
-technically valid and still be misused — OmniGuard checks identity, robot
-authorization, destination zone, speed, device binding and command
-behavior (replay/burst) on every command, and contains the credential the
-moment something looks like a compromise.
+Cyber-physical security broker for warehouse robots inside an NVIDIA Isaac Sim digital twin.
 
-## Status
+A stolen fleet credential may still authenticate — OmniGuard checks identity context, Zero-Trust policy and behavioural anomaly risk, then **deterministically** blocks, stops, revokes and quarantines before unsafe motion becomes a physical incident.
 
-- `broker/`, `scripts/`, `dashboard/` — done, tested locally, no GPU needed.
-- `isaac/` — written against Isaac Sim 6.0's documented API, not yet run on
-  real hardware. See [isaac/README.md](isaac/README.md) and
-  [docs/cloud_gpu_setup.md](docs/cloud_gpu_setup.md) before touching it.
-- `infra/` — Terraform for the AWS GPU instance Isaac Sim needs (this repo's
-  dev machine is macOS, which can't run Isaac Sim at all). Syntax-validated
-  with `terraform validate`, not yet applied against a real AWS account.
-  See [infra/README.md](infra/README.md) — `terraform apply` creates a
-  real, billable GPU instance, so that step is left for you to run and
-  confirm deliberately.
+> NVIDIA provides the physically accurate world. OmniGuard turns it into a cyber-physical red-team range.
 
-## Run the broker + demo locally (no Isaac Sim required)
+## Two complementary paths (both preserved)
 
-### Option A — Dev Container (zero local setup)
+| Path | Use for | Entry point |
+|------|---------|-------------|
+| **Primary (event demo)** | Four-button judges demo, fake robot, IsolationForest, incident AI | `backend.main:app` on **:8000** |
+| **JWT broker (Srikanth)** | JWT claims, replay/burst, mock/Isaac HTTP push adapter | `broker.main:app` on **:8001** |
 
-Open in [VS Code](https://code.visualstudio.com/) with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers), or launch in GitHub Codespaces:
-
-1. Open the repo in VS Code.
-2. When prompted **"Reopen in Container"**, click it (or run **Dev Containers: Reopen in Container** from the command palette).
-3. The container builds, installs dependencies, and runs `honcho start` automatically via `.devcontainer/devcontainer.json`.
-
-- **Broker API** → http://localhost:8000 *(forwarded automatically)*
-- **Dashboard UI** → http://localhost:8501 *(opens in browser automatically)*
-
-### Option B — one command with honcho (local)
-
-[honcho](https://honcho.readthedocs.io) reads the [`Procfile`](Procfile) and starts the broker + dashboard together with colour-coded output.
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt   # installs honcho too
-
-honcho start
+```text
+omniguard/
+├── backend/          # Runbook API + anomaly + incident AI (+ optional Isaac push)
+├── broker/           # Srikanth JWT broker + robot_adapter (preserved)
+├── dashboard/        # Four-button Streamlit demo → backend :8000
+├── simulator/        # fake_robot + isaac_bridge (poll contract)
+├── isaac/            # Srikanth command_bridge + warehouse demo
+├── infra/            # Srikanth g5 user_data stack + terraform/ Marketplace
+├── scripts/          # run_demo.sh (primary) + JWT clients + run_jwt_broker.sh
+└── tests/
 ```
 
-Press `Ctrl+C` to stop both services at once.
+## Quick start — primary hackathon demo (no GPU)
 
-### Option C — manual terminals
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-uvicorn broker.main:app --reload   # terminal 1
-
-python3 scripts/normal_client.py   # terminal 2 — expect ALLOW
-python3 scripts/attack_client.py   # terminal 2 — expect DENY, then DENY again (revoked)
-```
-
-## Dashboard
+> **Local demo only:** the `:8000` backend uses a shared demo credential string, not signed JWTs. `scripts/run_demo.sh` binds **127.0.0.1**. Prefer Srikanth's JWT broker on `:8001` when you need claim verification.
 
 ```bash
-streamlit run dashboard/app.py
+bash scripts/setup.sh
+bash scripts/run_demo.sh
 ```
 
-Buttons trigger the same normal/attack flows as the scripts, and render the
-live incident feed, revoked-token count and quarantined-identity list.
+| Surface | URL |
+|---------|-----|
+| Dashboard | http://127.0.0.1:8501 |
+| API docs | http://127.0.0.1:8000/docs |
 
-## Wiring in real Isaac Sim
+Buttons: **Reset** · **Normal** · **Attack — Protection OFF** · **Attack — OmniGuard ON**
 
-By default the broker uses `MockRobotController` (logs moves, no sim).
-Once Isaac Sim is running on a GPU host with the bridge from `isaac/`:
+```bash
+pytest -q
+```
+
+## Srikanth JWT broker (preserved)
+
+```bash
+bash scripts/run_jwt_broker.sh
+# other terminal:
+BROKER_URL=http://127.0.0.1:8001 python scripts/normal_client.py
+BROKER_URL=http://127.0.0.1:8001 python scripts/attack_client.py
+```
+
+Isaac push (either path) when the GPU bridge is up:
 
 ```bash
 export OMNIGUARD_ROBOT_BACKEND=isaac
-export ISAAC_BRIDGE_URL=http://<gpu-host-ip>:8899
-uvicorn broker.main:app --reload
+export ISAAC_BRIDGE_URL=http://<gpu-host>:8899
 ```
 
-## Security model
+Primary backend will then both queue poll commands *and* call Srikanth's `IsaacRobotController`. JWT broker uses the same adapter directly.
 
-See the policy engine in [broker/policy.py](broker/policy.py). Every
-`/command` request is checked for: token validity/expiry, revocation,
-identity quarantine, robot authorization, zone permission (with `HUMAN_ZONE`
-requiring an explicit `human_zone_authorized` claim even if listed), speed
-limit, device binding, replay, and command burst. Any "critical" violation
-(the ones that indicate misuse rather than a benign error) triggers full
-containment: revoke the token's `jti`, quarantine the identity, emergency-
-stop the robot, and log a red incident card.
+## Decision scheme (primary backend)
+
+```text
+Protection OFF              -> ALLOW (unsafe path for judges)
+Hard policy violation       -> BLOCK + contain
+AI risk >= 0.80             -> BLOCK + contain
+AI risk 0.60–0.79           -> HOLD
+AI risk < 0.60              -> ALLOW
+```
+
+## Docs
+
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) — 22-hour event plan  
+- [docs/ALIGNMENT.md](docs/ALIGNMENT.md) — how the trees were reconciled  
+- [docs/demo-script.md](docs/demo-script.md)  
+- [isaac/README.md](isaac/README.md) · [infra/README.md](infra/README.md) · [infra/terraform/README.md](infra/terraform/README.md)
+
+## Honest judge line
+
+> AI detects abnormal behaviour and explains incidents. Deterministic, auditable code performs the safety-critical block, stop and credential revocation.
