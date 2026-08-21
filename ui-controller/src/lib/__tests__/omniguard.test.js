@@ -235,3 +235,43 @@ describe('physical position', () => {
     expect(OG.readPosition({ position: { x: 'nope', y: 0 } })).toBeNull();
   });
 });
+
+describe('gamepad mapping', () => {
+  const pad = (axes, buttons = []) => ({ axes, buttons, mapping: 'standard' });
+
+  it('routes the left stick to the operator and the right stick to the attacker', () => {
+    const p = pad([0.9, -0.4, -0.7, 0.2]);          // L: right+up, R: left+down
+    const op = OG.padStickFor(p, 0);
+    const rogue = OG.padStickFor(p, 1);
+    expect(op.vec.x).toBeCloseTo(0.9);
+    expect(op.vec.y).toBeCloseTo(0.4);               // screen y inverted to world y
+    expect(rogue.vec.x).toBeCloseTo(-0.7);
+    expect(rogue.vec.y).toBeCloseTo(-0.2);
+    expect(op.active && rogue.active).toBe(true);
+  });
+
+  it('reports released so the thumb can spring back, never a stale deflection', () => {
+    const released = OG.padStickFor(pad([0.02, -0.01, 0, 0]), 0);
+    expect(released).toEqual({ vec: { x: 0, y: 0 }, mag: 0, active: false });
+  });
+
+  it('ignores stick drift below the deadzone', () => {
+    expect(OG.padStickFor(pad([0.1, 0.05, 0, 0]), 0).active).toBe(false);
+    expect(OG.padStickFor(pad([0.3, 0.0, 0, 0]), 0).active).toBe(true);
+  });
+
+  it('clamps magnitude to 1 on a full diagonal', () => {
+    expect(OG.padStickFor(pad([1, -1, 0, 0]), 0).mag).toBe(1);
+  });
+
+  it('survives a pad with missing axes', () => {
+    expect(OG.padStickFor(pad([]), 1).active).toBe(false);
+    expect(OG.padStickFor(undefined, 0).active).toBe(false);
+  });
+
+  it('detects Circle as the emergency stop', () => {
+    expect(OG.padEstopPressed(pad([0, 0, 0, 0], [{ pressed: false }, { pressed: true }]))).toBe(true);
+    expect(OG.padEstopPressed(pad([0, 0, 0, 0], [{ pressed: true }, { pressed: false }]))).toBe(false);
+    expect(OG.padEstopPressed(undefined)).toBe(false);
+  });
+});

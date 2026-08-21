@@ -58,6 +58,24 @@ export const IDENTITIES = {
 };
 
 export const DEADZONE = 0.12;
+
+/* Standard gamepad mapping. A DualSense reports mapping "standard" over both USB
+ * and Bluetooth, so panel 0 (operator) takes the left stick and panel 1
+ * (attacker) the right. Circle is the physical emergency stop. */
+export const PAD_ESTOP_BUTTON = 1;
+
+/** Pure axis read, so the mapping is testable without a browser or hardware. */
+export function padStickFor(pad, panelIndex, deadzone = DEADZONE) {
+  const x = pad?.axes?.[panelIndex * 2] ?? 0;
+  const y = -(pad?.axes?.[panelIndex * 2 + 1] ?? 0);
+  const raw = Math.hypot(x, y);
+  if (!Number.isFinite(raw) || raw <= deadzone) {
+    return { vec: { x: 0, y: 0 }, mag: 0, active: false };
+  }
+  return { vec: { x, y }, mag: Math.min(1, raw), active: true };
+}
+
+export const padEstopPressed = (pad) => pad?.buttons?.[PAD_ESTOP_BUTTON]?.pressed === true;
 export const LOOKAHEAD = 2.5;   // metres ahead of the robot the setpoint sits
 
 /* Mirrors GET /api/teleop/config exactly. Used ONLY when the gateway is not

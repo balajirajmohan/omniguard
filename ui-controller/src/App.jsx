@@ -124,7 +124,7 @@ export default function App() {
             panel={id}
             state={ctl.view[id]}
             onStick={stickHandler(id)}
-            external={ctl.external[id]}
+            padRef={ctl.padRef}
             options={ctl.options}
             setOptions={ctl.setOptions}
           />
@@ -132,7 +132,10 @@ export default function App() {
       </main>
 
       <footer className="mt-3 flex flex-wrap justify-between gap-3 text-[11px] text-faint">
-        <span>Left stick drives the operator · right stick drives the attacker · arrows or WASD when focused</span>
+        <span>
+          Left stick drives the operator · right stick the attacker · Circle is an emergency stop ·
+          pointer, arrows and WASD also work
+        </span>
         <span>
           Browser → OmniGuard {cfg.api} → secured bridge → Isaac. The browser never contacts the
           bridge and never holds its token.
