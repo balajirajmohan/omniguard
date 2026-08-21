@@ -11,9 +11,10 @@ logs/
 .ruff_cache/
 .streamlit/secrets.toml
 
-# Local starter kit copy (source material; not part of the app)
+# Local starter kit / handoff PDFs (source material; not part of the app)
 OmniGuard_Starter_Kit*/
-OmniGuard_Starter_Kit*/
+OmniGuard_*Handoff*.pdf
+OmniGuard_*.pdf
 
 # Terraform
 infra/.terraform/

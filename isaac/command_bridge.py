@@ -33,6 +33,12 @@ class CommandBridge:
                 self.end_headers()
                 self.wfile.write(payload)
 
+            def do_GET(self):
+                if self.path == "/health":
+                    self._reply(200, {"status": "ok", "service": "omniguard-isaac-bridge"})
+                else:
+                    self._reply(404, {"error": "not found"})
+
             def do_POST(self):
                 length = int(self.headers.get("Content-Length", 0))
                 try:

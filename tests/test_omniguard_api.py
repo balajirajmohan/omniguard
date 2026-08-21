@@ -7,7 +7,25 @@ SIM_HEADERS = {"X-OmniGuard-Simulator": SIMULATOR_TOKEN}
 
 
 def test_health():
-    assert client.get("/health").json()["status"] == "ok"
+    payload = client.get("/health").json()
+    assert payload["status"] == "ok"
+    assert "llm" in payload
+    assert payload["llm"]["controls_robot"] is False
+
+
+def test_scenario_catalog_and_combined_attack():
+    catalog = client.get("/api/scenarios").json()
+    ids = {item["id"] for item in catalog}
+    assert "combined_attack" in ids
+    assert "normal" in ids
+    blocked = client.post(
+        "/api/scenarios/combined_attack/run?protection=true&reset_first=true"
+    ).json()
+    assert blocked["final_decision"] == "BLOCK"
+    assert "UNKNOWN_DEVICE" in blocked["reasons"]
+    explanation = blocked.get("incident_explanation") or {}
+    assert explanation.get("provider")
+    assert "fallback_used" in explanation
 
 
 def test_normal_is_allowed():

@@ -32,6 +32,15 @@ Expected results:
 | Attack - OmniGuard ON | Command is blocked; robot stops; credential is revoked |
 | Reset Demo | Robot and credential return to their initial states |
 
+### Live AWS / Isaac (judge path)
+
+1. Laptop/mock: `bash scripts/run_demo.sh` (starts fake robot — fine for CI).
+2. Isaac: launch `isaac/warehouse_robot_demo.py` in DCV until `:8899` listens, then `bash scripts/run_isaac_services.sh` (**no** fake robot).
+3. Mac UI: SSM port-forward — see [MAC_ACCESS.md](MAC_ACCESS.md).
+4. Nova Carter path on Isaac 6.0.1: `/Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd`.
+
+Do not call the product "complete" after curl smoke tests alone — judges need the browser scenario flow.
+
 ## 3. Assign Owners Now
 
 For a three-person team:
