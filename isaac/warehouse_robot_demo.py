@@ -18,6 +18,12 @@ Run on the GPU host from a DCV terminal (needs DISPLAY), with Isaac's Python:
 Do not start a second Isaac GUI while this process owns the scene/bridge.
 """
 import math
+import sys
+from pathlib import Path
+
+OMNIGUARD_ROOT = Path(__file__).resolve().parents[1]
+if str(OMNIGUARD_ROOT) not in sys.path:
+    sys.path.insert(0, str(OMNIGUARD_ROOT))
 
 from isaacsim import SimulationApp
 
@@ -27,15 +33,18 @@ simulation_app = SimulationApp({"headless": False})
 # omniverse/kit modules aren't available until the app object initializes them.
 import carb  # noqa: E402
 import numpy as np  # noqa: E402
+from backend.zones import TELEOP_ZONES  # noqa: E402
 from isaacsim.core.api import World  # noqa: E402
 from isaacsim.core.utils.stage import add_reference_to_stage  # noqa: E402
 from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 
 from command_bridge import CommandBridge  # noqa: E402
+from demo_geometry import snap_heading_degrees, third_person_camera_eye  # noqa: E402
 from mobile_manipulator import (  # noqa: E402
     MobileManipulatorAssemblyError,
     build_mobile_manipulator,
 )
+from zone_visuals import add_zone_visuals  # noqa: E402
 
 ROBOT_ID = "robot-01"
 
@@ -50,6 +59,9 @@ ZONE_WAYPOINTS = {
 }
 
 MAX_STEP_SPEED = 2.0  # m/s safety cap regardless of what a command requests
+FOLLOW_CAMERA_PATH = "/World/OmniGuardFollowCamera"
+FOLLOW_CAMERA_LOOK_AT_HEIGHT = 0.9
+ROBOT_FORWARD_YAW_OFFSET_DEGREES = 0.0
 
 ARM_PRESETS_DEGREES = {
     "stow": {
@@ -115,6 +127,11 @@ def main():
 
     warehouse_usd = assets_root_path + "/Isaac/Environments/Simple_Warehouse/warehouse.usd"
     add_reference_to_stage(usd_path=warehouse_usd, prim_path="/World/Warehouse")
+    zone_layouts = add_zone_visuals(world.stage, TELEOP_ZONES, ZONE_WAYPOINTS)
+    carb.log_info(
+        "Added OmniGuard warehouse zone overlays: "
+        + ", ".join(layout.name for layout in zone_layouts)
+    )
 
     try:
         robot = build_mobile_manipulator(
@@ -135,9 +152,53 @@ def main():
         simulation_app.close()
         return
     import omni.usd
-    from pxr import Gf, Usd, UsdGeom, UsdPhysics
+    from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
 
     xform = UsdGeom.Xformable(robot_prim)
+    current_yaw_degrees = 0.0
+
+    follow_camera = UsdGeom.Camera.Define(world.stage, FOLLOW_CAMERA_PATH)
+    follow_camera.CreateFocalLengthAttr(24.0)
+    follow_camera.CreateHorizontalApertureAttr(22.0)
+    camera_xform = UsdGeom.Xformable(follow_camera.GetPrim())
+    camera_transform_op = camera_xform.AddTransformOp()
+
+    def set_active_follow_camera() -> None:
+        try:
+            from omni.kit.viewport.utility import get_active_viewport  # type: ignore
+
+            viewport = get_active_viewport()
+            if viewport is None:
+                carb.log_warn("No active viewport found; follow camera was created but not selected")
+                return
+            if hasattr(viewport, "set_active_camera"):
+                viewport.set_active_camera(FOLLOW_CAMERA_PATH)
+            else:
+                viewport.camera_path = Sdf.Path(FOLLOW_CAMERA_PATH)
+            carb.log_info(f"Viewport camera set to {FOLLOW_CAMERA_PATH}")
+        except Exception as exc:  # Isaac viewport APIs differ between versions.
+            carb.log_warn(f"Could not auto-select follow camera: {exc}")
+
+    def set_follow_camera(position: np.ndarray, yaw_degrees: float) -> None:
+        eye = third_person_camera_eye(
+            (float(position[0]), float(position[1]), float(position[2])),
+            yaw_degrees,
+        )
+        target = Gf.Vec3d(
+            float(position[0]),
+            float(position[1]),
+            float(position[2]) + FOLLOW_CAMERA_LOOK_AT_HEIGHT,
+        )
+        eye_vec = Gf.Vec3d(*eye)
+        back = (eye_vec - target).GetNormalized()
+        right = Gf.Cross(Gf.Vec3d(0.0, 0.0, 1.0), back).GetNormalized()
+        up = Gf.Cross(back, right).GetNormalized()
+        matrix = Gf.Matrix4d(1.0)
+        matrix.SetRow(0, Gf.Vec4d(right[0], right[1], right[2], 0.0))
+        matrix.SetRow(1, Gf.Vec4d(up[0], up[1], up[2], 0.0))
+        matrix.SetRow(2, Gf.Vec4d(back[0], back[1], back[2], 0.0))
+        matrix.SetRow(3, Gf.Vec4d(eye[0], eye[1], eye[2], 1.0))
+        camera_transform_op.Set(matrix)
 
     def normalise_name(value: str) -> str:
         return "".join(ch for ch in value.lower() if ch.isalnum())
@@ -228,6 +289,17 @@ def main():
         else:
             xform.AddTranslateOp().Set(Gf.Vec3d(x, y, z))
 
+    def set_yaw(yaw_degrees: float) -> None:
+        rotate_ops = [op for op in xform.GetOrderedXformOps() if op.GetOpType() == UsdGeom.XformOp.TypeRotateZ]
+        target_yaw = yaw_degrees + ROBOT_FORWARD_YAW_OFFSET_DEGREES
+        if rotate_ops:
+            rotate_ops[0].Set(float(target_yaw))
+        else:
+            xform.AddRotateZOp().Set(float(target_yaw))
+
+    set_follow_camera(get_position(), current_yaw_degrees)
+    set_active_follow_camera()
+
     bridge = CommandBridge(port=8899)
     bridge.start()
     print(f"OmniGuard Isaac bridge listening on {bridge.host}:{bridge.port}")
@@ -316,13 +388,20 @@ def main():
         if distance < 0.05:
             target = None
             bridge.update_state(motion_state="IDLE", speed=0.0, target=None)
+            set_follow_camera(pos, current_yaw_degrees)
             continue
+
+        snapped_yaw = snap_heading_degrees(dx, dy)
+        if snapped_yaw is not None and snapped_yaw != current_yaw_degrees:
+            current_yaw_degrees = snapped_yaw
+            set_yaw(current_yaw_degrees)
 
         dt = world.get_physics_dt() or (1.0 / 60.0)
         step = min(distance, speed * dt)
         pos[0] += dx / distance * step
         pos[1] += dy / distance * step
         set_position(pos[0], pos[1], pos[2])
+        set_follow_camera(pos, current_yaw_degrees)
 
     bridge.stop()
     simulation_app.close()

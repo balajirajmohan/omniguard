@@ -11,6 +11,8 @@
 | `command_bridge.py`       | In-process HTTP server (`:8899`) — `GET /health`, `POST /move`, `POST /stop` |
 | `mobile_manipulator.py`   | Loads the bundled Clearpath Ridgeback + Franka mobile manipulator            |
 | `warehouse_robot_demo.py` | Warehouse + composite robot; kinematic base MOVE/STOP                        |
+| `zone_visuals.py`         | Authors visible USD floor overlays for OmniGuard safe/restricted zones       |
+| `demo_geometry.py`        | Laptop-testable heading snap and follow-camera geometry helpers              |
 
 Default Isaac Sim 6.0.1 asset:
 
@@ -22,6 +24,28 @@ This bundled catalog robot is preferred because it is already a coherent mobile
 manipulator: wheeled Ridgeback base plus Franka/Panda-style arm and end-effector.
 This phase does **not** add arm trajectory, IK, grasp, or gripper commands to the
 broker; OmniGuard still exposes only base MOVE and emergency STOP.
+
+### Visual overlays and camera
+
+`warehouse_robot_demo.py` authors OmniGuard's policy zones directly into the
+active stage instead of modifying NVIDIA's referenced warehouse USD. The overlays
+use the authoritative rectangles from `backend/zones.py` and appear under:
+
+```text
+/World/OmniGuardZones/SAFE_ZONE_A
+/World/OmniGuardZones/SAFE_ZONE_B
+/World/OmniGuardZones/RESTRICTED_ZONE
+```
+
+Safe zones render as green floor tints with labels and waypoint rings. The
+restricted zone renders as a red tint with hazard stripes and is slightly lifted
+above safe overlays so the policy rule "restricted wins" is visible on overlaps.
+
+The demo also creates `/World/OmniGuardFollowCamera` and attempts to select it in
+the active viewport. During MOVE commands the robot root snaps to the nearest
+90-degree heading before translating, so a right/left/up/down command visibly
+turns the robot without requiring smooth steering or wheel simulation. The follow
+camera stays behind and above that snapped heading.
 
 Useful catalog alternatives:
 
