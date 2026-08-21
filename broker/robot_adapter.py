@@ -1,6 +1,7 @@
 import logging
 import os
 from abc import ABC, abstractmethod
+from typing import Any
 
 import requests
 
@@ -18,19 +19,18 @@ class RobotController(ABC):
 
 
 class MockRobotController(RobotController):
-    """Simulates robot movement without Isaac Sim.
-
-    Lets the broker, policy engine and dashboard be built and demoed on any
-    machine, independent of Isaac Sim/GPU availability. Swap for
-    IsaacRobotController once the Isaac Sim bridge is reachable.
-    """
-
     def __init__(self):
         self._positions: dict[str, tuple[float, float]] = {}
 
     def move_to(self, robot_id: str, x: float, y: float, speed: float) -> bool:
         self._positions[robot_id] = (x, y)
-        logger.info("[MOCK] robot=%s moving to (%.2f, %.2f) at speed=%.2f", robot_id, x, y, speed)
+        logger.info(
+            "[MOCK] robot=%s moving to (%.2f, %.2f) at speed=%.2f",
+            robot_id,
+            x,
+            y,
+            speed,
+        )
         return True
 
     def emergency_stop(self, robot_id: str) -> bool:
@@ -39,42 +39,93 @@ class MockRobotController(RobotController):
 
 
 class IsaacRobotController(RobotController):
-    """Forwards approved commands to the Isaac Sim command bridge.
-
-    The bridge (isaac/command_bridge.py) runs inside Isaac Sim's own Python
-    process on the GPU host, since Isaac's robot APIs are only importable
-    there. This class just does the HTTP call from wherever the broker runs.
-    """
-
     def __init__(self, base_url: str | None = None, timeout: float = 3.0):
-        self.base_url = (base_url or os.environ.get("ISAAC_BRIDGE_URL", "http://localhost:8899")).rstrip("/")
+        self.base_url = (
+            base_url or os.environ.get("ISAAC_BRIDGE_URL", "http://127.0.0.1:8899")
+        ).rstrip("/")
         self.timeout = timeout
+        self.token = os.environ.get("ISAAC_BRIDGE_TOKEN", "omniguard-bridge")
 
-    def move_to(self, robot_id: str, x: float, y: float, speed: float) -> bool:
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Content-Type": "application/json",
+            "X-OmniGuard-Bridge-Token": self.token,
+        }
+
+    def move_to_queued(
+        self, robot_id: str, x: float, y: float, speed: float
+    ) -> dict[str, Any]:
         try:
             resp = requests.post(
                 f"{self.base_url}/move",
                 json={"robot_id": robot_id, "x": x, "y": y, "speed": speed},
+                headers=self._headers(),
                 timeout=self.timeout,
             )
+            if resp.status_code == 401:
+                return {"ok": False, "error": "unauthorized"}
             resp.raise_for_status()
-            return True
-        except requests.RequestException:
+            body = resp.json()
+            return {
+                "ok": True,
+                "command_id": body.get("command_id"),
+                "status": body.get("status", "QUEUED"),
+            }
+        except requests.RequestException as exc:
             logger.exception("Isaac bridge move_to failed for robot=%s", robot_id)
-            return False
+            return {"ok": False, "error": str(exc)}
 
-    def emergency_stop(self, robot_id: str) -> bool:
+    def emergency_stop_queued(self, robot_id: str) -> dict[str, Any]:
         try:
             resp = requests.post(
                 f"{self.base_url}/stop",
                 json={"robot_id": robot_id},
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            if resp.status_code == 401:
+                return {"ok": False, "error": "unauthorized"}
+            resp.raise_for_status()
+            body = resp.json()
+            return {
+                "ok": True,
+                "command_id": body.get("command_id"),
+                "status": body.get("status", "QUEUED"),
+            }
+        except requests.RequestException as exc:
+            logger.exception("Isaac bridge emergency_stop failed for robot=%s", robot_id)
+            return {"ok": False, "error": str(exc)}
+
+    def get_command_status(self, command_id: str) -> str | None:
+        try:
+            resp = requests.get(
+                f"{self.base_url}/commands/{command_id}",
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            if resp.status_code != 200:
+                return None
+            return resp.json().get("status")
+        except requests.RequestException:
+            return None
+
+    def get_state(self) -> dict[str, Any] | None:
+        try:
+            resp = requests.get(
+                f"{self.base_url}/state",
+                headers=self._headers(),
                 timeout=self.timeout,
             )
             resp.raise_for_status()
-            return True
+            return resp.json()
         except requests.RequestException:
-            logger.exception("Isaac bridge emergency_stop failed for robot=%s", robot_id)
-            return False
+            return None
+
+    def move_to(self, robot_id: str, x: float, y: float, speed: float) -> bool:
+        return bool(self.move_to_queued(robot_id, x, y, speed).get("ok"))
+
+    def emergency_stop(self, robot_id: str) -> bool:
+        return bool(self.emergency_stop_queued(robot_id).get("ok"))
 
 
 def get_robot_controller() -> RobotController:
