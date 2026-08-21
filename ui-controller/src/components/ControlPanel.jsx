@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Crosshair, Gauge, MapPin, ShieldCheck, Skull } from 'lucide-react';
+import { Clock, Crosshair, Gauge, MapPin, ShieldCheck, Skull } from 'lucide-react';
 import Joystick from './Joystick.jsx';
 import StatusLamp from './StatusLamp.jsx';
 import VerdictLog from './VerdictLog.jsx';
@@ -97,7 +97,16 @@ export default function ControlPanel({ panel, state, onStick, external, options,
             </div>
           </dl>
         </div>
-        <StatusLamp state={state.lamp} label={state.lampLabel} />
+        <div className="flex flex-col items-end gap-1.5">
+          <StatusLamp state={state.lamp} label={state.lampLabel} />
+          {state.ai && (
+            <span title="The model scores the control session, not each movement packet"
+              className="rounded-full border border-info/50 bg-info/10 px-2.5 py-0.5 font-mono
+                         text-[10px] text-info">
+              AI {state.ai.enforcement_mode ?? 'SHADOW_TELEOP'} · risk {state.ai.risk}
+            </span>
+          )}
+        </div>
       </header>
 
       <div className="flex flex-wrap items-start gap-5">
@@ -119,12 +128,23 @@ export default function ControlPanel({ panel, state, onStick, external, options,
         <div className="mt-8 grid gap-2">
           <Toggle
             checked={options.overspeed} onChange={(v) => setOptions({ ...options, overspeed: v })} tone="warn"
-            title="Overspeed" hint="Ignore the 1.5 m/s governor a real client would honour"
+            title="Overspeed" hint="Ignore the governor a compliant client would honour"
           />
-          <Toggle
-            checked={options.bypass} onChange={(v) => setOptions({ ...options, bypass: v })} tone="bad"
-            title="Bypass broker" hint="Skip OmniGuard and drive :8899 directly"
-          />
+          {/* The "bypass broker" toggle is gone by design: the browser has no
+              route to the bridge any more, so offering one would be a lie. */}
+        </div>
+      )}
+
+      {state.lease && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-ok/40
+                        bg-ok/5 px-3 py-2 font-mono text-[10.5px] text-ok">
+          <span className="flex items-center gap-1.5">
+            <Clock size={10} aria-hidden="true" />lease {String(state.lease.controlId).slice(0, 8)}
+          </span>
+          {state.lease.maxSpeed != null && <span>max {state.lease.maxSpeed} m/s</span>}
+          {state.lease.allowedZones?.length > 0 && (
+            <span className="truncate">zones {state.lease.allowedZones.join(', ')}</span>
+          )}
         </div>
       )}
 
@@ -147,15 +167,6 @@ export default function ControlPanel({ panel, state, onStick, external, options,
           ))}
         </div>
       </div>
-
-      {rogue && options.bypass && (
-        <p className="a-rise mt-2 flex items-start gap-2 rounded-xl border border-bad/50 bg-bad/10 px-3 py-2
-                      text-[11.5px] text-bad">
-          <AlertTriangle size={13} className="mt-px shrink-0" aria-hidden="true" />
-          The policy engine is not being consulted. This is exactly why port 8899 must never be
-          reachable from outside the GPU host.
-        </p>
-      )}
 
       <VerdictLog entries={state.log} />
     </section>

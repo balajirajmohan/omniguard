@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Save, X } from 'lucide-react';
 
+/* The Isaac bridge is deliberately absent. It is loopback-only and token
+ * protected; the browser has no route to it and must never hold its token.
+ * The fleet credential is likewise not editable or persisted here. */
 const FIELDS = [
-  ['api', 'OmniGuard API', 'http://HOST:8000', 'Every authorization decision is made here.'],
-  ['bridge', 'Isaac bridge', 'http://HOST:8899', 'Motion only. Never consulted for policy.'],
-  ['credential', 'Demo credential', 'fleet-agent-valid-token', 'Shared by both control planes.'],
+  ['api', 'OmniGuard API', 'http://127.0.0.1:8000', 'The only host this browser talks to.'],
   ['robot', 'Robot ID', 'robot-01', 'Must match the prim in the Isaac scene.'],
 ];
 
@@ -13,7 +14,7 @@ export default function SettingsSheet({ cfg, onSave, onClose }) {
 
   const save = () => {
     const cleaned = { ...draft };
-    for (const k of ['api', 'bridge']) cleaned[k] = (cleaned[k] || '').trim().replace(/\/+$/, '');
+    cleaned.api = (cleaned.api || '').trim().replace(/\/+$/, '');
     onSave(cleaned);
   };
 
@@ -27,7 +28,7 @@ export default function SettingsSheet({ cfg, onSave, onClose }) {
         </button>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2">
         {FIELDS.map(([key, label, placeholder, hint]) => (
           <div key={key}>
             <label className="block">
@@ -41,7 +42,10 @@ export default function SettingsSheet({ cfg, onSave, onClose }) {
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-[11.5px] text-faint">Stored in this browser only — no rebuild needed to change hosts.</p>
+        <p className="text-[11.5px] text-faint">
+          Stored in this browser only. The fleet credential is held in memory for this tab and is
+          never written to localStorage.
+        </p>
         <button onClick={save} className="btn btn-primary"><Save size={14} aria-hidden="true" />Save</button>
       </div>
     </section>

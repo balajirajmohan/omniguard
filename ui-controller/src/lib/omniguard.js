@@ -1,190 +1,198 @@
-/* OmniGuard transport + policy geometry.
+/* OmniGuard API client.
  *
- * Deliberately framework-free: every constant here was measured against the
- * running backend, and none of it should drift because a component was
- * refactored.
+ * SECURITY BOUNDARY: the browser talks to the OmniGuard backend and nothing
+ * else. It never contacts the Isaac bridge on :8899, never holds the bridge
+ * token, and never actuates the robot directly. Movement reaches Isaac only as:
  *
- *   authorization  ->  POST {api}/api/commands   (the real policy engine)
- *   motion         ->  POST {bridge}/move        (same payload as the curl)
- *   stop           ->  POST {bridge}/stop
+ *   React UI  ->  backend :8000  ->  secured bridge :8899  ->  Isaac
  *
- * The rogue panel is NOT blocked in this file, or anywhere else in the UI. It
- * sends the same command the operator sends and gets BLOCK back from the
- * broker because its device_id is not the enrolled controller. Enforcing the
- * block client-side would prove nothing.
+ * The rogue control plane is NOT blocked in this file, or anywhere in the UI.
+ * It sends the same request the operator sends, with a different device_id, and
+ * the backend rejects it. A client-side block would prove nothing.
  */
 
 export const DEFAULTS = {
-  api: 'http://localhost:8501',
-  bridge: 'http://localhost:8899',
-  credential: 'fleet-agent-valid-token',
+  api: 'http://127.0.0.1:8000',
   robot: 'robot-01',
 };
 
+/* The fleet credential is deliberately NOT persisted — it stays in memory for
+ * the life of the tab. Writing it to localStorage would leave a working robot
+ * credential sitting in the browser profile after the demo. */
+export const DEMO_CREDENTIAL = 'fleet-agent-valid-token';
+
 export function loadConfig() {
   try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('omniguard.cfg') || '{}') };
+    const saved = JSON.parse(localStorage.getItem('omniguard.cfg') || '{}');
+    delete saved.credential;   // ignore anything a previous build persisted
+    delete saved.bridge;       // the bridge is not addressable from a browser
+    return { ...DEFAULTS, ...saved, credential: DEMO_CREDENTIAL };
   } catch {
-    return { ...DEFAULTS };
+    return { ...DEFAULTS, credential: DEMO_CREDENTIAL };
   }
 }
+
 export function saveConfig(cfg) {
-  try { localStorage.setItem('omniguard.cfg', JSON.stringify(cfg)); } catch { /* private mode */ }
+  try {
+    const { credential, ...persistable } = cfg;   // credential intentionally dropped
+    localStorage.setItem('omniguard.cfg', JSON.stringify(persistable));
+  } catch { /* private mode */ }
 }
-
-export const POLICY_MAX_SPEED = 1.5; // backend/policy.py MAX_SPEED — the governor
-
-/* The stick maps into 0.45-1.05 m/s, NOT 0-1.5, and that is deliberate.
- * backend/anomaly.py trains its IsolationForest on speeds drawn from
- * uniform(0.3, 1.2), so anything below ~0.4 or at/above ~1.15 scores as
- * out-of-distribution: risk climbs past 0.60 and decide() returns HOLD. A
- * legitimate operator would then be held at BOTH a light touch and full
- * deflection, and the robot would never move. Measured risk across this band
- * is 0.22-0.29, comfortably inside ALLOW.
- *
- * Widen only after retraining the detector on the real teleop range. */
-export const STICK_MIN = 0.45;
-export const STICK_MAX = 1.05;
-export const OVERSPEED = 3.5;  // what a modified client would send
-export const LOOKAHEAD = 2.5;  // metres ahead of the robot the setpoint sits
-export const DEADZONE = 0.12;
-export const TICK_MS = 125;    // 8 Hz motion streaming
-export const REAUTH_MS = 2500; // re-check authorization even when nothing changed
-
-/* Zone geometry, anchored on the waypoints in backend/actuation.py
- * (SAFE_ZONE_A 0,0 / SAFE_ZONE_B 10,4 / RESTRICTED_ZONE 6,8).
- * The safe rectangles are adjacent at x=5 so there is a continuous drivable
- * strip — a gap between them would block the robot mid-route. Restricted is
- * matched first so any overlap fails closed. Retune once real extents are
- * read off the Isaac stage; this block is the only geometry in the UI. */
-export const RESTRICTED = { RESTRICTED_ZONE: [2, 5, 12, 12] };
-export const SAFE = { SAFE_ZONE_A: [-5, -5, 5, 5], SAFE_ZONE_B: [5, -5, 15, 5] };
-export const FLOOR = [-6, -6, 16, 13];
-
-const inRect = ([x0, y0, x1, y1], x, y) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
-
-export function zoneAt(x, y) {
-  for (const [n, r] of Object.entries(RESTRICTED)) if (inRect(r, x, y)) return n;
-  for (const [n, r] of Object.entries(SAFE)) if (inRect(r, x, y)) return n;
-  return 'OUT_OF_BOUNDS';
-}
-
-export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 export const IDENTITIES = {
   legit: { agent_id: 'fleet-agent-01', device_id: 'fleet-controller-01' },
   rogue: { agent_id: 'fleet-agent-01', device_id: 'rogue-controller' },
 };
 
-/* ------------------------------------------------------------- transport */
+export const DEADZONE = 0.12;
+export const LOOKAHEAD = 2.5;   // metres ahead of the robot the setpoint sits
 
-async function apiPost(cfg, path, body) {
-  const r = await fetch(cfg.api + path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+/* Mirrors GET /api/teleop/config exactly. Used ONLY when the gateway is not
+ * reachable yet (backend branch not merged), and the UI says so plainly rather
+ * than pretending it has authoritative geometry. */
+export const FALLBACK_TELEOP_CONFIG = {
+  robot_id: 'robot-01',
+  max_speed: 1.5,
+  stream_hz: 8,
+  deadman_timeout_ms: 750,
+  lease_ttl_seconds: 30,
+  zones: {
+    SAFE_ZONE_A: { x_min: -5, x_max: 5, y_min: -5, y_max: 5 },
+    SAFE_ZONE_B: { x_min: 5, x_max: 15, y_min: -5, y_max: 5 },
+    RESTRICTED_ZONE: { x_min: 2, x_max: 12, y_min: 5, y_max: 12 },
+  },
+};
+
+export const isRestrictedZone = (name) => /RESTRICTED|HUMAN/i.test(name);
+
+/** Drawable extent, derived from whichever zone set is in force. */
+export function floorBounds(zones) {
+  const rects = Object.values(zones ?? {});
+  if (!rects.length) return [-6, -6, 16, 13];
+  const pad = 1;
+  return [
+    Math.min(...rects.map((r) => r.x_min)) - pad,
+    Math.min(...rects.map((r) => r.y_min)) - pad,
+    Math.max(...rects.map((r) => r.x_max)) + pad,
+    Math.max(...rects.map((r) => r.y_max)) + pad,
+  ];
 }
 
-export async function apiGet(cfg, path) {
-  const r = await fetch(cfg.api + path);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+/* DISPLAY ONLY. The backend computes the authoritative zone for every packet and
+ * the UI never sends a zone name. This exists so the operator can see where a
+ * setpoint is heading before the verdict comes back. */
+export function zoneAt(x, y, zones) {
+  const entries = Object.entries(zones ?? {});
+  const inside = ([, r]) => x >= r.x_min && x <= r.x_max && y >= r.y_min && y <= r.y_max;
+  const hit = entries.filter(inside);
+  if (!hit.length) return 'OUT_OF_BOUNDS';
+  return (hit.find(([n]) => isRestrictedZone(n)) ?? hit[0])[0];   // restricted wins
 }
 
-/* No headers on purpose. isaac/command_bridge.py sends no CORS headers and has
- * no OPTIONS handler, so adding Content-Type: application/json would force a
- * preflight it cannot answer. A bodied POST with the default text/plain type is
- * a "simple request": it is delivered, and json.loads() parses it server-side
- * because the bridge reads raw bytes without checking Content-Type. We cannot
- * read the response, which costs nothing — verdicts come from the API. */
-function bridgePost(cfg, path, body) {
-  return fetch(cfg.bridge + path, {
-    method: 'POST',
-    mode: 'no-cors',
-    body: JSON.stringify(body),
-  }).catch(() => {});
-}
+export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-export const sendMove = (cfg, x, y, speed) =>
-  bridgePost(cfg, '/move', {
-    robot_id: cfg.robot,
-    x: +x.toFixed(3),
-    y: +y.toFixed(3),
-    speed: +speed.toFixed(3),
-  });
-
-export const sendStop = (cfg) => bridgePost(cfg, '/stop', { robot_id: cfg.robot });
-
-export async function bridgeReachable(cfg) {
-  try { await fetch(cfg.bridge + '/health', { mode: 'no-cors' }); return true; }
-  catch { return false; }
-}
-
-/* v0.3.0 CommandRequest is `extra="forbid"`. Sending commands_last_10_seconds or
- * previous_failures — as this UI used to — now returns 422 "Extra inputs are not
- * permitted". Behavioural history is derived server-side by backend/behavior.py
- * from the request's own timing, and must not be supplied. */
-export function buildCommand(cfg, panelId, zone, speed) {
-  return {
-    credential: cfg.credential,
-    ...IDENTITIES[panelId],
-    robot_id: cfg.robot,
-    destination: zone,
-    speed: +speed.toFixed(2),
-    protection_enabled: true,
-  };
-}
-
-export const authorize = (cfg, panelId, zone, speed) =>
-  apiPost(cfg, '/api/commands', buildCommand(cfg, panelId, zone, speed));
-
-export const resetBackend = (cfg) => apiPost(cfg, '/api/reset');
-
-/* Drive home through the policy engine rather than poking the bridge, so the
- * return trip is itself an authorized command. */
-export const driveHome = (cfg) =>
-  apiPost(cfg, '/api/commands', buildCommand(cfg, 'legit', 'SAFE_ZONE_A', 1.0));
-
-export function speedFor(mag, { overspeed = false } = {}) {
+/** Stick deflection -> commanded speed. Deterministic policy caps at max_speed. */
+export function speedFor(mag, { maxSpeed, overspeed = false } = {}) {
   if (mag <= DEADZONE) return 0;
-  if (overspeed) return OVERSPEED;
+  /* A modified client is not bound by the vendor's governor — this is what makes
+   * the overspeed attack real rather than simulated. */
+  if (overspeed) return +(maxSpeed + 2).toFixed(2);
   const t = Math.min(1, (mag - DEADZONE) / (1 - DEADZONE));
-  return STICK_MIN + t * (STICK_MAX - STICK_MIN);
+  return +Math.max(0.1, t * maxSpeed).toFixed(2);
 }
 
-/* ------------------------------------------------- v0.3.0 read endpoints */
+/* --------------------------------------------------------------- transport */
 
-export const getHealth        = (cfg) => apiGet(cfg, '/health');
-export const getState         = (cfg) => apiGet(cfg, '/api/state');
-export const getEvents        = (cfg) => apiGet(cfg, '/api/events');
-export const getTimeline      = (cfg) => apiGet(cfg, '/api/timeline');
+export class ApiError extends Error {
+  constructor(message, { status, body } = {}) {
+    super(message);
+    this.status = status;
+    this.body = body;
+  }
+}
+
+async function request(cfg, method, path, body) {
+  let res;
+  try {
+    res = await fetch(cfg.api + path, {
+      method,
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new ApiError(`network: ${err.message}`, { status: 0 });
+  }
+  const text = await res.text();
+  let parsed = null;
+  try { parsed = text ? JSON.parse(text) : null; } catch { /* non-JSON */ }
+  if (!res.ok) {
+    const detail = parsed?.detail ?? parsed?.reason ?? res.statusText;
+    throw new ApiError(typeof detail === 'string' ? detail : `HTTP ${res.status}`,
+      { status: res.status, body: parsed });
+  }
+  return parsed;
+}
+
+export const apiGet = (cfg, path) => request(cfg, 'GET', path);
+const apiPost = (cfg, path, body) => request(cfg, 'POST', path, body);
+
+/* ------------------------------------------------------- read endpoints */
+
+export const getHealth         = (cfg) => apiGet(cfg, '/health');
+export const getState          = (cfg) => apiGet(cfg, '/api/state');
+export const getEvents         = (cfg) => apiGet(cfg, '/api/events');
+export const getTimeline       = (cfg) => apiGet(cfg, '/api/timeline');
 export const getLatestIncident = (cfg) => apiGet(cfg, '/api/incidents/latest');
-export const listScenarios    = (cfg) => apiGet(cfg, '/api/scenarios');
-
-/* The agent is read-only by construction: it reports `disallowed:
- * ["arbitrary_robot_movement"]`, which is worth showing rather than hiding. */
-export const investigate = (cfg) => apiPost(cfg, '/api/investigate');
+export const listScenarios     = (cfg) => apiGet(cfg, '/api/scenarios');
+export const investigate       = (cfg) => apiPost(cfg, '/api/investigate');
+export const resetBackend      = (cfg) => apiPost(cfg, '/api/reset');
 
 export const runScenario = (cfg, id, { protection = true, resetFirst = true } = {}) =>
   apiPost(cfg, `/api/scenarios/${encodeURIComponent(id)}/run` +
     `?protection=${protection}&reset_first=${resetFirst}`);
 
-export const runDemoNormal  = (cfg) => apiPost(cfg, '/api/demo/normal');
-export const runDemoAnomaly = (cfg) => apiPost(cfg, '/api/demo/anomaly');
-export const runDemoAttack  = (cfg, protection = true) =>
-  apiPost(cfg, `/api/demo/attack?protection=${protection}`);
+/* --------------------------------------------- teleoperation gateway ---
+ * Frozen contract. Field names and shapes are fixed by agreement with the
+ * backend; do not rename them locally. */
 
-export const RISK_WARNING  = 0.60;
+export const getTeleopConfig = (cfg) => apiGet(cfg, '/api/teleop/config');
+
+export const teleopStart = (cfg, panelId, { x, y, speed }) =>
+  apiPost(cfg, '/api/teleop/start', {
+    credential: cfg.credential,
+    ...IDENTITIES[panelId],
+    robot_id: cfg.robot,
+    x: +x.toFixed(3),
+    y: +y.toFixed(3),
+    speed: +speed.toFixed(2),
+  });
+
+export const teleopMove = (cfg, { controlId, sequence, x, y, speed }) =>
+  apiPost(cfg, '/api/teleop/move', {
+    control_id: controlId,
+    sequence,
+    robot_id: cfg.robot,
+    x: +x.toFixed(3),
+    y: +y.toFixed(3),
+    speed: +speed.toFixed(2),
+    /* No zone field on purpose — the backend derives it. A browser-supplied
+     * zone name would be attacker-controlled input to a safety check. */
+  });
+
+export const teleopStop = (cfg, { controlId, reason }) =>
+  apiPost(cfg, '/api/teleop/stop', {
+    control_id: controlId,
+    robot_id: cfg.robot,
+    reason,
+  });
+
+/* ------------------------------------------------------------ presentation */
+
+export const RISK_WARNING = 0.60;
 export const RISK_CRITICAL = 0.80;
-
 export const riskBand = (r) =>
   r >= RISK_CRITICAL ? 'critical' : r >= RISK_WARNING ? 'warning' : 'normal';
 
-/* Human labels for the server-derived feature vector, so a HOLD can be
- * explained instead of just asserted. */
 export const FEATURE_LABELS = {
   speed: 'speed',
   known_device: 'known device',
@@ -194,3 +202,12 @@ export const FEATURE_LABELS = {
   hour_of_day: 'hour of day',
   seconds_since_last_command: 'gap since last',
 };
+
+/** Normalises isaac_bridge_state.position, which may arrive as [x,y] or {x,y}. */
+export function readPosition(bridgeState) {
+  const p = bridgeState?.position;
+  if (!p) return null;
+  const x = Array.isArray(p) ? p[0] : p.x;
+  const y = Array.isArray(p) ? p[1] : p.y;
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}

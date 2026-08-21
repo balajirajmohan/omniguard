@@ -1,7 +1,8 @@
 import { Cpu, Gamepad2, RotateCcw, Settings, Zap } from 'lucide-react';
 
-export default function TopBar({ status, health, onReset, onToggleSettings, pad, resetting, settingsOpen }) {
-  const online = status.robot_status !== 'API DOWN';
+export default function TopBar({ status, health, gatewayReady, onReset, onToggleSettings,
+                                 pad, resetting, settingsOpen }) {
+  const online = status.online !== false && status.robot_status !== 'API DOWN';
   const ai = health?.anomaly;
   return (
     <header className="mb-3 flex flex-wrap items-center gap-4">
@@ -28,9 +29,12 @@ export default function TopBar({ status, health, onReset, onToggleSettings, pad,
           </span>
           {online ? 'BROKER LIVE' : 'BROKER DOWN'}
         </span>
-        <span className={`hidden items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] sm:flex
-                          ${status.bridge ? 'border-line text-dim' : 'border-bad/50 text-bad'}`}>
-          bridge {status.bridge ? 'reachable' : 'unreachable'}
+        <span title="Backend-mediated teleoperation gateway"
+          className={`hidden items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] sm:flex
+                      ${gatewayReady === true ? 'border-ok/50 text-ok'
+                        : gatewayReady === false ? 'border-warn/50 text-warn' : 'border-line text-faint'}`}>
+          teleop gateway {gatewayReady === true ? 'ready'
+            : gatewayReady === false ? 'not deployed' : 'checking'}
         </span>
         {ai && (
           /* Model provenance up front: version, artifact integrity, and the fact

@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Radar, ShieldAlert } from 'lucide-react';
+import { PlugZap, Radar, ShieldAlert } from 'lucide-react';
 import ControlPanel from './components/ControlPanel.jsx';
 import DecisionCard from './components/DecisionCard.jsx';
 import InvestigatePanel from './components/InvestigatePanel.jsx';
@@ -43,12 +43,27 @@ export default function App() {
         resetting={ctl.resetting}
         settingsOpen={showSettings}
         health={ctl.health}
+        gatewayReady={ctl.gatewayReady}
         onReset={() => { setScenarioResult(null); ctl.reset(); }}
         onToggleSettings={() => setShowSettings((v) => !v)}
       />
 
       {showSettings && (
         <SettingsSheet cfg={cfg} onSave={onSave} onClose={() => setShowSettings(false)} />
+      )}
+
+      {ctl.gatewayReady === false && (
+        <div role="status"
+          className="a-rise mb-3 flex items-start gap-3 rounded-2xl border border-warn/50 bg-warn/10 px-4 py-3">
+          <PlugZap size={17} className="mt-0.5 shrink-0 text-warn" aria-hidden="true" />
+          <p className="text-[13px] leading-relaxed text-dim">
+            <b className="text-warn">Teleop gateway not deployed.</b>{' '}
+            <span className="font-mono text-[12px]">/api/teleop/config</span> is not answering on{' '}
+            <span className="font-mono text-[12px]">{cfg.api}</span>, so the joysticks have nothing
+            to authorize against. Scenarios, telemetry and investigation still work. Zone geometry
+            below is the contract default, not server-authoritative.
+          </p>
+        </div>
       )}
 
       {revoked && (
@@ -73,9 +88,16 @@ export default function App() {
             </h2>
             <span className="font-mono text-[11px] text-faint">
               {ctl.world.setpoints.length > 0 ? 'tracking setpoint' : 'holding position'}
+              {ctl.status.bridge?.speed != null && ` · ${ctl.status.bridge.speed} m/s`}
             </span>
           </div>
-          <WarehouseMap robot={ctl.world.robot} trail={ctl.world.trail} setpoints={ctl.world.setpoints} />
+          <WarehouseMap
+            zones={ctl.teleopConfig.zones}
+            robot={ctl.world.robot}
+            target={ctl.world.target}
+            trail={ctl.world.trail}
+            setpoints={ctl.world.setpoints}
+          />
         </div>
 
         <TelemetryRail status={ctl.status} robot={ctl.world.robot} />
@@ -103,7 +125,10 @@ export default function App() {
 
       <footer className="mt-3 flex flex-wrap justify-between gap-3 text-[11px] text-faint">
         <span>Left stick drives the operator · right stick drives the attacker · arrows or WASD when focused</span>
-        <span>Both planes send real commands — OmniGuard decides which one reaches the robot</span>
+        <span>
+          Browser → OmniGuard {cfg.api} → secured bridge → Isaac. The browser never contacts the
+          bridge and never holds its token.
+        </span>
       </footer>
     </div>
   );
