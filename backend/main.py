@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backend.anomaly import detector
+from backend.actuation import maybe_actuate_move, maybe_actuate_stop
 from backend.incident_ai import explain_incident
 from backend.policy import (
     KNOWN_DEVICE,
@@ -122,6 +123,14 @@ def evaluate(command: CommandRequest) -> dict[str, Any]:
             }
         )
         STATE["robot_speed"] = command.speed
+        actuation = maybe_actuate_move(
+            command.robot_id, command.destination, command.speed
+        )
+        if actuation is False:
+            actions.append("ISAAC_ACTUATION_FAILED")
+            STATE["robot_status"] = "MOVE_FAILED"
+        elif actuation is True:
+            actions.append("ISAAC_MOVE_SENT")
     elif outcome["contain"]:
         STATE["command_queue"].clear()
         STATE["command_queue"].append({"action": "STOP"})
@@ -130,6 +139,14 @@ def evaluate(command: CommandRequest) -> dict[str, Any]:
         STATE["credential_status"] = "REVOKED"
         STATE["agent_status"] = "QUARANTINED"
         STATE["last_containment_ack"] = "STOP_QUEUED"
+        actuation = maybe_actuate_stop(command.robot_id)
+        if actuation is False:
+            actions.append("ISAAC_ESTOP_FAILED")
+            STATE["robot_status"] = "CONTAINMENT_FAILED"
+            STATE["last_containment_ack"] = "ESTOP_FAILED"
+        elif actuation is True:
+            actions.append("ISAAC_ESTOP_SENT")
+            STATE["last_containment_ack"] = "ESTOP_SENT"
     # HOLD: do not forward, do not revoke
 
     event: dict[str, Any] = {

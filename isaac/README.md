@@ -1,16 +1,21 @@
-# Isaac Sim helpers (GPU day)
+# Isaac Sim helpers (GPU day) — Srikanth + runbook
 
-Primary event integration path is **[`simulator/isaac_bridge.py`](../simulator/isaac_bridge.py)** — it uses the same poll/telemetry contract as `fake_robot.py`.
+## Prefer for the event
 
-This folder keeps optional in-process helpers from earlier work:
+[`simulator/isaac_bridge.py`](../simulator/isaac_bridge.py) — same poll/telemetry contract as `fake_robot.py`.
 
-- `command_bridge.py` — HTTP server to queue moves inside Isaac's process
-- `warehouse_robot_demo.py` — starter scene/motion sketch (unverified on GPU until you run it)
+## Srikanth's preserved helpers
+
+| File | Role |
+|------|------|
+| `command_bridge.py` | In-process HTTP server (`:8899`) for push moves/stops from `broker.robot_adapter` |
+| `warehouse_robot_demo.py` | Warehouse + Nova Carter starter sketch (verify on GPU) |
 
 ## Order of operations
 
 1. Laptop demo green (`bash scripts/run_demo.sh`).
-2. On GPU: Isaac launches, warehouse loads, one robot moves/stops from Python.
-3. Implement TODOs in `simulator/isaac_bridge.py`.
-4. Stop `fake_robot` / remove `robot:` from Procfile so only Isaac consumes commands.
-5. Record a backup video immediately.
+2. On GPU: Isaac launches; one robot moves/stops from Python.
+3. Either:
+   - Implement TODOs in `simulator/isaac_bridge.py` and stop `fake_robot`, **or**
+   - Start `command_bridge` inside Isaac and set `OMNIGUARD_ROBOT_BACKEND=isaac` / `ISAAC_BRIDGE_URL`.
+4. Record a backup video immediately.

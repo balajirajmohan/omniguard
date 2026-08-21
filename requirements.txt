@@ -3,6 +3,7 @@ uvicorn[standard]>=0.32.0
 streamlit>=1.39.0
 requests>=2.32.0
 pydantic>=2.9.0
+pyjwt>=2.9.0
 scikit-learn>=1.5.0
 numpy>=2.0.0
 pandas>=2.2.0

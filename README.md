@@ -6,71 +6,62 @@ A stolen fleet credential may still authenticate — OmniGuard checks identity c
 
 > NVIDIA provides the physically accurate world. OmniGuard turns it into a cyber-physical red-team range.
 
-## Aligned layout (hackathon MVP)
+## Two complementary paths (both preserved)
+
+| Path | Use for | Entry point |
+|------|---------|-------------|
+| **Primary (event demo)** | Four-button judges demo, fake robot, IsolationForest, incident AI | `backend.main:app` on **:8000** |
+| **JWT broker (Srikanth)** | JWT claims, replay/burst, mock/Isaac HTTP push adapter | `broker.main:app` on **:8001** |
 
 ```text
 omniguard/
-├── backend/          # FastAPI: policy + IsolationForest + incident AI
-├── dashboard/        # Four-button Streamlit demo
-├── simulator/        # fake_robot.py + isaac_bridge.py (same HTTP contract)
-├── isaac/            # GPU-day helpers (command bridge / warehouse starter)
-├── tests/
-├── docs/RUNBOOK.md   # 22-hour event runbook
-├── infra/terraform/  # Preferred AWS Isaac Marketplace workstation
-├── requirements.txt
-├── .env.example
-└── Procfile
+├── backend/          # Runbook API + anomaly + incident AI (+ optional Isaac push)
+├── broker/           # Srikanth JWT broker + robot_adapter (preserved)
+├── dashboard/        # Four-button Streamlit demo → backend :8000
+├── simulator/        # fake_robot + isaac_bridge (poll contract)
+├── isaac/            # Srikanth command_bridge + warehouse demo
+├── infra/            # Srikanth g5 user_data stack + terraform/ Marketplace
+├── scripts/          # run_demo.sh (primary) + JWT clients + run_jwt_broker.sh
+└── tests/
 ```
 
-## Quick start (no GPU)
+## Quick start — primary hackathon demo (no GPU)
 
 ```bash
 bash scripts/setup.sh
 bash scripts/run_demo.sh
 ```
 
-Or with honcho:
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-honcho start
-```
-
-Open:
-
 | Surface | URL |
 |---------|-----|
 | Dashboard | http://127.0.0.1:8501 |
 | API docs | http://127.0.0.1:8000/docs |
-| Health | http://127.0.0.1:8000/health |
 
-### Four-button demo
-
-1. **Normal Operation** — ALLOW; fake robot moves to `SAFE_ZONE_B`
-2. **Attack — Protection OFF** — dangerous command reaches the robot (before/after)
-3. **Attack — OmniGuard ON** — BLOCK; stop; revoke; quarantine; incident explanation
-4. **Reset Demo** — restore baseline
+Buttons: **Reset** · **Normal** · **Attack — Protection OFF** · **Attack — OmniGuard ON**
 
 ```bash
 pytest -q
 ```
 
-## API contract (source of truth)
+## Srikanth JWT broker (preserved)
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/health` | Liveness |
-| POST | `/api/reset` | Reset demo state |
-| POST | `/api/commands` | Evaluate a movement command |
-| POST | `/api/demo/normal` | Scripted normal path |
-| POST | `/api/demo/attack?protection=` | Scripted attack ON/OFF |
-| GET | `/api/state` | Dashboard state |
-| GET | `/api/events` | Evidence timeline |
-| GET | `/api/robots/robot-01/next-command` | Simulator poll |
-| POST | `/api/robots/robot-01/telemetry` | Simulator ack |
+```bash
+bash scripts/run_jwt_broker.sh
+# other terminal:
+BROKER_URL=http://127.0.0.1:8001 python scripts/normal_client.py
+BROKER_URL=http://127.0.0.1:8001 python scripts/attack_client.py
+```
 
-## Decision scheme
+Isaac push (either path) when the GPU bridge is up:
+
+```bash
+export OMNIGUARD_ROBOT_BACKEND=isaac
+export ISAAC_BRIDGE_URL=http://<gpu-host>:8899
+```
+
+Primary backend will then both queue poll commands *and* call Srikanth's `IsaacRobotController`. JWT broker uses the same adapter directly.
+
+## Decision scheme (primary backend)
 
 ```text
 Protection OFF              -> ALLOW (unsafe path for judges)
@@ -80,28 +71,12 @@ AI risk 0.60–0.79           -> HOLD
 AI risk < 0.60              -> ALLOW
 ```
 
-Safety-critical block/stop/revoke is **deterministic**. IsolationForest scores risk; Bedrock/Claude (optional) only explains incidents.
-
-```bash
-export LLM_PROVIDER=bedrock
-export AWS_REGION=ap-south-1
-export BEDROCK_MODEL_ID=your-claude-model-id
-```
-
-## Isaac Sim
-
-1. Prove the laptop demo first (`fake_robot`).
-2. On GPU: load a small warehouse + one mobile robot; implement TODOs in [`simulator/isaac_bridge.py`](simulator/isaac_bridge.py).
-3. Stop `fake_robot` so only Isaac consumes the command queue.
-4. Optional helpers: [`isaac/`](isaac/) (in-process HTTP bridge / warehouse starter).
-
-GPU day-zero: [docs/isaac-setup.md](docs/isaac-setup.md) · Terraform: [infra/terraform/README.md](infra/terraform/README.md)
-
 ## Docs
 
-- **Event runbook:** [docs/RUNBOOK.md](docs/RUNBOOK.md)
-- **Alignment notes:** [docs/ALIGNMENT.md](docs/ALIGNMENT.md)
-- **Demo script:** [docs/demo-script.md](docs/demo-script.md)
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) — 22-hour event plan  
+- [docs/ALIGNMENT.md](docs/ALIGNMENT.md) — how the trees were reconciled  
+- [docs/demo-script.md](docs/demo-script.md)  
+- [isaac/README.md](isaac/README.md) · [infra/README.md](infra/README.md) · [infra/terraform/README.md](infra/terraform/README.md)
 
 ## Honest judge line
 
