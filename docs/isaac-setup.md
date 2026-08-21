@@ -12,10 +12,10 @@ macOS cannot run Isaac Sim locally. Use AWS.
 - [ ] EC2 key pair created
 - [ ] Security group restricted to team IPs:
 
-| Port | Purpose |
-|------|---------|
-| TCP 22 | SSH |
-| TCP 8443 | Amazon DCV |
+| Port      | Purpose          |
+| --------- | ---------------- |
+| TCP 22    | SSH              |
+| TCP 8443  | Amazon DCV       |
 | TCP 49100 | WebRTC (if used) |
 | UDP 47998 | WebRTC (if used) |
 
@@ -33,14 +33,14 @@ terraform init && terraform apply
 bash ../../scripts/discover_isaac_ami.sh ap-south-1   # if AMI lookup fails
 ```
 
-| Setting | Value |
-|---------|-------|
-| Instance | `g6e.4xlarge` (On-Demand, not Spot) |
-| GPU | 1× NVIDIA L40S (~44 GiB usable) |
-| vCPU / RAM | 16 / 128 GiB |
-| Region | `ap-south-1` (Mumbai) |
-| Storage | 1 TB gp3 SSD |
-| AMI | NVIDIA Isaac Sim Linux Marketplace image |
+| Setting    | Value                                    |
+| ---------- | ---------------------------------------- |
+| Instance   | `g6e.4xlarge` (On-Demand, not Spot)      |
+| GPU        | 1× NVIDIA L40S (~44 GiB usable)          |
+| vCPU / RAM | 16 / 128 GiB                             |
+| Region     | `ap-south-1` (Mumbai)                    |
+| Storage    | 1 TB gp3 SSD                             |
+| AMI        | NVIDIA Isaac Sim Linux Marketplace image |
 
 After launch:
 
@@ -54,7 +54,8 @@ After launch:
    - `small_warehouse_digital_twin.usd`
    - `warehouse.usd`
    - `warehouse_with_forklifts.usd`
-2. Add a bundled mobile robot (e.g. **Nova Carter**). Do not import a custom robot.
+2. Run the repository script to compose only bundled assets: **Idealworks
+   iw.hub + UR10e + Robotiq 2F-140**. Do not import a custom robot.
 3. Mark three destinations: `ZONE_A`, `ZONE_B`, `HUMAN_ZONE`.
 4. Run one Isaac Python movement example so the robot visibly moves Zone A → Zone B.
 5. Download warehouse / robot assets **locally on the instance** so demos do not wait on network loads.
@@ -64,7 +65,11 @@ After launch:
 - [ ] Isaac Sim launches successfully
 - [ ] Warehouse scene loads
 - [ ] One mobile robot appears
+- [ ] iw.hub, UR10e, and Robotiq 2F-140 all appear as one coherent assembly
+- [ ] Arm/gripper mounts have no visible gaps or interpenetration
+- [ ] UR10e remains in the stowed pose and the gripper remains open
 - [ ] Python script moves robot Zone A → Zone B
+- [ ] A STOP request halts the composite robot before the current target
 - [ ] Mac can reach the GPU machine over DCV
 - [ ] Git repo accessible on the instance
 
@@ -80,3 +85,7 @@ After launch:
 ## 6. OmniGuard integration note
 
 Once Checkpoint A and Checkpoint B (broker ALLOW/DENY) both pass, point the broker's Isaac adapter at the control script on this workstation. Denied commands must never reach the robot controller; on containment, send zero-velocity / emergency-stop.
+
+The current PoC command surface remains base `MOVE` and emergency `STOP` only.
+Arm manipulation, IK, grasp planning, rack collision validation, and realistic
+server payload handling are intentionally deferred.

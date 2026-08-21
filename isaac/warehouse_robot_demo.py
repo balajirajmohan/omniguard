@@ -1,9 +1,13 @@
-"""Standalone Isaac Sim script: loads a bundled warehouse, spawns one bundled
-mobile robot (Nova Carter), and drives it to whatever (x, y, speed) target the
-OmniGuard broker last approved via the CommandBridge HTTP server.
+"""Standalone Isaac Sim script for OmniGuard's mobile manipulator.
 
-Verified on AWS Isaac Sim 6.0.1 (L40S): warehouse loads, Nova Carter moves/stops
-via CommandBridge :8899 when OmniGuard sets OMNIGUARD_ROBOT_BACKEND=isaac.
+Loads a bundled warehouse and assembles an Idealworks iw.hub, UR10e and
+Robotiq 2F-140. It drives the composite robot to whatever (x, y, speed) target
+the OmniGuard broker last approved via the CommandBridge HTTP server.
+
+The previous Nova Carter path was verified on AWS Isaac Sim 6.0.1. This new
+composite asset must be smoke-tested on that GPU host before claiming the same
+runtime status. The arm remains stowed and the gripper remains open in this
+phase; OmniGuard exposes only base MOVE and emergency STOP.
 
 Movement is kinematic (capped step toward target) for demo reliability — not a
 validated fleet controller. Asset paths can still shift between Isaac releases.
@@ -28,9 +32,12 @@ from isaacsim.core.utils.stage import add_reference_to_stage  # noqa: E402
 from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 
 from command_bridge import CommandBridge  # noqa: E402
+from mobile_manipulator import (  # noqa: E402
+    MobileManipulatorAssemblyError,
+    build_mobile_manipulator,
+)
 
 ROBOT_ID = "robot-01"
-ROBOT_PRIM_PATH = "/World/NovaCarter"
 
 # Zones used by backend/actuation.py and the four-button demo.
 ZONE_WAYPOINTS = {
@@ -57,15 +64,24 @@ def main():
     warehouse_usd = assets_root_path + "/Isaac/Environments/Simple_Warehouse/warehouse.usd"
     add_reference_to_stage(usd_path=warehouse_usd, prim_path="/World/Warehouse")
 
-    # Isaac Sim 6.0.1 catalogs Nova Carter under Robots/NVIDIA/ (not Robots/NovaCarter).
-    nova_carter_usd = (
-        assets_root_path + "/Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd"
-    )
-    add_reference_to_stage(usd_path=nova_carter_usd, prim_path=ROBOT_PRIM_PATH)
+    try:
+        robot = build_mobile_manipulator(
+            world.stage,
+            assets_root_path,
+            log=carb.log_info,
+        )
+    except (MobileManipulatorAssemblyError, ValueError) as exc:
+        carb.log_error(f"Could not build OmniGuard mobile manipulator: {exc}")
+        simulation_app.close()
+        return
 
     world.reset()
 
-    robot_prim = world.stage.GetPrimAtPath(ROBOT_PRIM_PATH)
+    robot_prim = world.stage.GetPrimAtPath(robot.root_prim_path)
+    if not robot_prim.IsValid():
+        carb.log_error(f"Composite robot root is invalid: {robot.root_prim_path}")
+        simulation_app.close()
+        return
     import omni.usd
     from pxr import Gf, UsdGeom
 
@@ -78,7 +94,9 @@ def main():
     def set_position(x: float, y: float, z: float):
         translate_ops = [op for op in xform.GetOrderedXformOps() if op.GetOpType() == UsdGeom.XformOp.TypeTranslate]
         if translate_ops:
-            translate_ops[0].Set(Gf.Vec3d(x, y, z))
+            precision = translate_ops[0].GetPrecision()
+            vector = Gf.Vec3f(x, y, z) if precision == UsdGeom.XformOp.PrecisionFloat else Gf.Vec3d(x, y, z)
+            translate_ops[0].Set(vector)
         else:
             xform.AddTranslateOp().Set(Gf.Vec3d(x, y, z))
 
