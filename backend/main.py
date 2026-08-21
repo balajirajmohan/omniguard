@@ -28,8 +28,10 @@ from backend.policy import (
     decide,
 )
 from backend.scenarios import get_scenario, list_scenarios
+from backend.teleop import TeleopManager
 
 SIMULATOR_TOKEN = os.getenv("OMNIGUARD_SIMULATOR_TOKEN", "omniguard-sim")
+OPERATOR_TOKEN = os.getenv("OMNIGUARD_OPERATOR_TOKEN", "omniguard-operator")
 
 app = FastAPI(
     title="OmniGuard API",
@@ -63,6 +65,14 @@ def initial_state() -> dict[str, Any]:
         "last_containment_ack": None,
         "last_command_at": None,
         "timeline": [],
+        "mock_bridge_state": {
+            "position": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "target": None,
+            "speed": 0.0,
+            "motion_state": "IDLE",
+            "last_command_id": None,
+        },
+        "active_teleop": None,
     }
 
 
@@ -70,7 +80,7 @@ STATE = initial_state()
 
 
 class CommandRequest(BaseModel):
-    """Real command properties only — behavioral history is server-derived."""
+    """Public command properties only. Protection is always enforced server-side."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -80,7 +90,37 @@ class CommandRequest(BaseModel):
     robot_id: str = "robot-01"
     destination: str
     speed: float = Field(ge=0, le=10)
-    protection_enabled: bool = True
+
+
+class TeleopStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    credential: str
+    agent_id: str = "fleet-agent-01"
+    device_id: str
+    robot_id: str = "robot-01"
+    x: float = 0.0
+    y: float = 0.0
+    speed: float = 0.8
+
+
+class TeleopMoveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    control_id: str
+    sequence: int = Field(ge=1)
+    robot_id: str = "robot-01"
+    x: float
+    y: float
+    speed: float
+
+
+class TeleopStopRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    control_id: str
+    robot_id: str = "robot-01"
+    reason: str = "JOYSTICK_RELEASED"
 
 
 class Telemetry(BaseModel):
@@ -101,11 +141,104 @@ def require_simulator(x_omniguard_simulator: str | None = Header(default=None)) 
         )
 
 
+def require_operator_for_protection_off(
+    protection: bool,
+    x_omniguard_operator: str | None,
+) -> None:
+    if protection:
+        return
+    if x_omniguard_operator != OPERATOR_TOKEN:
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Disabling protection requires X-OmniGuard-Operator header "
+                "(demo comparison only)"
+            ),
+        )
+
+
+def _security_snapshot() -> dict[str, Any]:
+    with _LOCK:
+        return {
+            "credential_status": STATE["credential_status"],
+            "agent_status": STATE["agent_status"],
+            "robot_status": STATE["robot_status"],
+        }
+
+
+def _apply_containment(robot_id: str, actions: list[str]) -> None:
+    with _LOCK:
+        STATE["credential_status"] = "REVOKED"
+        STATE["agent_status"] = "QUARANTINED"
+        STATE["robot_status"] = "CONTAINED"
+        STATE["robot_speed"] = 0.0
+        STATE["last_containment_ack"] = "CONTAINMENT_REQUESTED"
+        STATE["command_queue"].clear()
+        STATE["command_queue"].append({"action": "STOP"})
+        STATE["active_teleop"] = None
+
+
+def _append_teleop_event(event: dict[str, Any]) -> None:
+    with _LOCK:
+        STATE["events"].insert(0, event)
+        STATE["events"] = STATE["events"][:100]
+        STATE["timeline"].insert(
+            0,
+            {
+                "at": event.get("timestamp", now()),
+                "step": event.get("kind", "teleop"),
+                "detail": {
+                    "final_decision": event.get("final_decision"),
+                    "reasons": event.get("reasons"),
+                    "actions": event.get("actions"),
+                },
+            },
+        )
+        STATE["timeline"] = STATE["timeline"][:200]
+
+
+def _update_mock_pose(
+    x: float = 0.0,
+    y: float = 0.0,
+    speed: float = 0.0,
+    command_id: str | None = None,
+    motion_state: str | None = None,
+    *,
+    keep_position: bool = False,
+) -> None:
+    with _LOCK:
+        bridge = STATE["mock_bridge_state"]
+        if motion_state == "STOPPED":
+            bridge["speed"] = 0.0
+            bridge["motion_state"] = "STOPPED"
+            bridge["target"] = None
+            return
+        if not keep_position:
+            bridge["position"] = {"x": float(x), "y": float(y), "z": 0.0}
+            bridge["target"] = {"x": float(x), "y": float(y)}
+        bridge["speed"] = float(speed)
+        bridge["motion_state"] = "MOVING" if speed > 0 else "IDLE"
+        if command_id:
+            bridge["last_command_id"] = command_id
+        STATE["robot_speed"] = float(speed)
+        if speed > 0 and STATE["robot_status"] not in {"CONTAINED", "CONTAINMENT_FAILED"}:
+            STATE["robot_status"] = "MOVING"
+
+
+teleop_manager = TeleopManager(
+    get_security_state=_security_snapshot,
+    apply_containment=_apply_containment,
+    append_event=_append_teleop_event,
+    update_mock_pose=_update_mock_pose,
+)
+
+
 def reset_state() -> dict[str, Any]:
     with _LOCK:
         STATE.clear()
         STATE.update(initial_state())
         behavior_tracker.reset()
+        teleop_manager.reset()
         return public_state_unlocked()
 
 
@@ -164,6 +297,7 @@ def _scenario_behavior(scenario: dict[str, Any]) -> BehaviorContext | None:
 def evaluate(
     command: CommandRequest,
     *,
+    protection_enabled: bool = True,
     behavior_override: BehaviorContext | None = None,
 ) -> dict[str, Any]:
     with _LOCK:
@@ -236,9 +370,9 @@ def evaluate(
             }
         )
 
-        STATE["protection_enabled"] = command.protection_enabled
+        STATE["protection_enabled"] = protection_enabled
         outcome = decide(
-            protection_enabled=command.protection_enabled,
+            protection_enabled=protection_enabled,
             reasons=reasons,
             risk=risk,
         )
@@ -378,6 +512,7 @@ def evaluate(
             "containment_actions": actions if outcome["contain"] else [],
             "caught_by": caught_by,
             "timeline": list(reversed(timeline_steps)),
+            "protection_enabled": protection_enabled,
         }
         if decision == "BLOCK":
             event["incident_explanation"] = explain_incident(event)
@@ -418,7 +553,9 @@ def run_scenario(
     scenario_id: str,
     protection: bool = Query(default=True),
     reset_first: bool = Query(default=True),
+    x_omniguard_operator: str | None = Header(default=None),
 ) -> dict[str, Any]:
+    require_operator_for_protection_off(protection, x_omniguard_operator)
     scenario = get_scenario(scenario_id)
     if scenario is None:
         raise HTTPException(status_code=404, detail=f"Unknown scenario: {scenario_id}")
@@ -436,8 +573,8 @@ def run_scenario(
                     device_id="unknown-attacker-device",
                     destination=RESTRICTED_ZONE,
                     speed=3.5,
-                    protection_enabled=True,
                 ),
+                protection_enabled=True,
                 behavior_override=BehaviorContext(
                     commands_last_10_seconds=8,
                     previous_failures=3,
@@ -455,8 +592,8 @@ def run_scenario(
             robot_id=scenario["robot_id"],
             destination=scenario["destination"],
             speed=scenario["speed"],
-            protection_enabled=protection,
         ),
+        protection_enabled=protection,
         behavior_override=_scenario_behavior(scenario),
     )
 
@@ -468,7 +605,8 @@ def reset() -> dict[str, Any]:
 
 @app.post("/api/commands")
 def commands(command: CommandRequest) -> dict[str, Any]:
-    return evaluate(command)
+    # Public path always enforces protection — no caller override.
+    return evaluate(command, protection_enabled=True)
 
 
 @app.post("/api/demo/normal")
@@ -480,8 +618,8 @@ def demo_normal() -> dict[str, Any]:
             device_id=KNOWN_DEVICE,
             destination="SAFE_ZONE_B",
             speed=0.8,
-            protection_enabled=True,
         ),
+        protection_enabled=True,
         behavior_override=BehaviorContext(
             commands_last_10_seconds=1,
             previous_failures=0,
@@ -493,7 +631,11 @@ def demo_normal() -> dict[str, Any]:
 
 
 @app.post("/api/demo/attack")
-def demo_attack(protection: bool = Query(default=True)) -> dict[str, Any]:
+def demo_attack(
+    protection: bool = Query(default=True),
+    x_omniguard_operator: str | None = Header(default=None),
+) -> dict[str, Any]:
+    require_operator_for_protection_off(protection, x_omniguard_operator)
     reset_state()
     return evaluate(
         CommandRequest(
@@ -501,8 +643,8 @@ def demo_attack(protection: bool = Query(default=True)) -> dict[str, Any]:
             device_id="unknown-attacker-device",
             destination=RESTRICTED_ZONE,
             speed=3.5,
-            protection_enabled=protection,
         ),
+        protection_enabled=protection,
         behavior_override=BehaviorContext(
             commands_last_10_seconds=8,
             previous_failures=3,
@@ -523,8 +665,8 @@ def demo_anomaly() -> dict[str, Any]:
             device_id=KNOWN_DEVICE,
             destination="SAFE_ZONE_B",
             speed=1.45,
-            protection_enabled=True,
         ),
+        protection_enabled=True,
         behavior_override=BehaviorContext(
             commands_last_10_seconds=10,
             previous_failures=4,
@@ -535,12 +677,47 @@ def demo_anomaly() -> dict[str, Any]:
     )
 
 
+@app.get("/api/teleop/config")
+def teleop_config() -> dict[str, Any]:
+    return teleop_manager.config()
+
+
+@app.post("/api/teleop/start")
+def teleop_start(body: TeleopStartRequest) -> dict[str, Any]:
+    result = teleop_manager.start(body.model_dump())
+    with _LOCK:
+        STATE["active_teleop"] = {
+            "control_id": result.get("control_id"),
+            "decision": result.get("final_decision"),
+            "ai": result.get("ai"),
+        }
+    return result
+
+
+@app.post("/api/teleop/move")
+def teleop_move(body: TeleopMoveRequest) -> dict[str, Any]:
+    return teleop_manager.move(body.model_dump())
+
+
+@app.post("/api/teleop/stop")
+def teleop_stop(body: TeleopStopRequest) -> dict[str, Any]:
+    result = teleop_manager.stop(body.model_dump())
+    with _LOCK:
+        STATE["active_teleop"] = None
+        STATE["robot_speed"] = 0.0
+        if STATE["robot_status"] not in {"CONTAINED", "CONTAINMENT_FAILED"}:
+            STATE["robot_status"] = "STOPPED"
+    return result
+
+
 @app.get("/api/state")
 def state() -> dict[str, Any]:
     payload = public_state()
     bridge = fetch_bridge_state()
     if bridge is not None:
         payload["isaac_bridge_state"] = bridge
+    else:
+        payload["isaac_bridge_state"] = payload.get("mock_bridge_state")
     return payload
 
 

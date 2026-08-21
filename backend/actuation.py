@@ -46,6 +46,23 @@ def _poll_command(controller, command_id: str, timeout: float = 2.0) -> str:
     return "QUEUED"
 
 
+def maybe_actuate_move_xy(
+    robot_id: str, x: float, y: float, speed: float
+) -> ActuationResult | None:
+    """Push an absolute XY target to the Isaac bridge when enabled."""
+    if os.getenv("OMNIGUARD_ROBOT_BACKEND", "mock").lower() != "isaac":
+        return None
+    from broker.robot_adapter import IsaacRobotController
+
+    controller = IsaacRobotController()
+    queued = controller.move_to_queued(robot_id, x, y, speed)
+    if not queued.get("ok"):
+        return ActuationResult(False, "FAILED", detail=queued.get("error"))
+    command_id = queued.get("command_id")
+    # Teleop is latency-sensitive: return QUEUED quickly; reconcile via /api/state.
+    return ActuationResult(True, "QUEUED", command_id=command_id)
+
+
 def maybe_actuate_move(robot_id: str, destination: str, speed: float) -> ActuationResult | None:
     if os.getenv("OMNIGUARD_ROBOT_BACKEND", "mock").lower() != "isaac":
         return None
