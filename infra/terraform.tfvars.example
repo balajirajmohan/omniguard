@@ -1,0 +1,5 @@
+aws_region           = "us-east-1"
+instance_type         = "g5.2xlarge"
+key_name              = "your-existing-ec2-keypair-name"
+allowed_ssh_cidr      = "203.0.113.4/32"   # your IP, not 0.0.0.0/0
+allowed_bridge_cidr   = "203.0.113.4/32"   # broker host's IP, not 0.0.0.0/0

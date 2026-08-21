@@ -1,127 +1,88 @@
-from broker.config import RESTRICTED_ZONES, ZONES
-from broker.models import MoveCommand, PolicyReason
-from broker.store import EventStore
+from dataclasses import dataclass
+
+from broker.auth import TokenError, decode_token
+from broker.models import CommandRequest
+from broker.state import state
+
+HUMAN_ZONE = "HUMAN_ZONE"
+
+# Violations that indicate credential misuse or an active attack, not just a
+# malformed/edge-case request. These trigger full containment: revoke the
+# token, quarantine the identity, and e-stop the robot.
+CRITICAL_VIOLATIONS = {
+    "TOKEN_INVALID",
+    "TOKEN_EXPIRED",
+    "TOKEN_REVOKED",
+    "IDENTITY_QUARANTINED",
+    "ROBOT_NOT_AUTHORIZED",
+    "ZONE_NOT_PERMITTED",
+    "HUMAN_ZONE_UNAUTHORIZED",
+    "DEVICE_MISMATCH",
+    "REPLAY_DETECTED",
+    "COMMAND_BURST",
+}
 
 
-def evaluate_command(
-    claims: dict,
-    command: MoveCommand,
-    store: EventStore,
-) -> tuple[bool, list[PolicyReason], float, bool]:
-    """Return (allowed, reasons, risk_score, should_contain).
+@dataclass
+class PolicyResult:
+    allow: bool
+    violations: list[str]
+    reason: str
+    identity: str | None
+    jti: str | None
+    contained: bool
 
-    Decision order:
-    1. token unrevoked
-    2. robot allowed
-    3. destination zone permitted
-    4. speed within limit
-    5. device matches credential
-    6. anomaly checks (restricted zone intent, rogue device, burst)
-    """
-    reasons: list[PolicyReason] = []
-    risk = 0.0
-    jti = claims.get("jti")
-    sub = claims.get("sub", "unknown")
 
-    if jti and store.is_revoked(jti):
-        reasons.append(
-            PolicyReason(code="token_revoked", message="Credential has been revoked")
+def evaluate(request: CommandRequest) -> PolicyResult:
+    violations: list[str] = []
+
+    try:
+        claims = decode_token(request.token)
+    except TokenError as exc:
+        return PolicyResult(
+            allow=False,
+            violations=[exc.code],
+            reason=exc.message,
+            identity=None,
+            jti=None,
+            contained=False,
         )
-        return False, reasons, 1.0, True
 
-    if store.is_quarantined(sub):
-        reasons.append(
-            PolicyReason(
-                code="identity_quarantined",
-                message=f"Identity {sub} is quarantined after prior containment",
-            )
-        )
-        return False, reasons, 1.0, True
+    identity = claims["sub"]
+    jti = claims["jti"]
 
-    allowed_robots = set(claims.get("robots") or [])
-    if command.robot_id not in allowed_robots:
-        reasons.append(
-            PolicyReason(
-                code="robot_forbidden",
-                message=f"Identity may not control {command.robot_id}",
-            )
-        )
-        risk = max(risk, 0.8)
+    if state.is_revoked(jti):
+        violations.append("TOKEN_REVOKED")
+    if state.is_quarantined(identity):
+        violations.append("IDENTITY_QUARANTINED")
+    if request.robot_id not in claims.get("robots", []):
+        violations.append("ROBOT_NOT_AUTHORIZED")
+    if request.target_zone not in claims.get("zones", []):
+        violations.append("ZONE_NOT_PERMITTED")
+    elif request.target_zone == HUMAN_ZONE and not claims.get("human_zone_authorized", False):
+        violations.append("HUMAN_ZONE_UNAUTHORIZED")
+    if request.speed > claims.get("max_speed", 0):
+        violations.append("SPEED_EXCEEDED")
+    if request.device_id != claims.get("device_id"):
+        violations.append("DEVICE_MISMATCH")
+    if state.is_replay(jti, request.command_id):
+        violations.append("REPLAY_DETECTED")
+    if state.is_burst(identity):
+        violations.append("COMMAND_BURST")
 
-    allowed_zones = set(claims.get("zones") or [])
-    if command.destination_zone not in ZONES:
-        reasons.append(
-            PolicyReason(
-                code="zone_unknown",
-                message=f"Unknown destination zone {command.destination_zone}",
-            )
-        )
-        risk = max(risk, 0.7)
-    elif command.destination_zone not in allowed_zones:
-        reasons.append(
-            PolicyReason(
-                code="zone_forbidden",
-                message=(
-                    f"Destination {command.destination_zone} is outside token zone grant"
-                ),
-            )
-        )
-        risk = max(risk, 0.95)
+    allow = not violations
+    contained = any(v in CRITICAL_VIOLATIONS for v in violations)
 
-    if command.destination_zone in RESTRICTED_ZONES:
-        reasons.append(
-            PolicyReason(
-                code="human_zone_breach",
-                message="Command targets HUMAN_ZONE — potential cyber-to-physical harm",
-            )
-        )
-        risk = max(risk, 0.99)
+    if allow:
+        reason = "Command satisfies token, zone, speed and device policy."
+    else:
+        reason = f"Denied: {', '.join(violations)}"
 
-    max_speed = float(claims.get("max_speed", 0))
-    if command.speed > max_speed:
-        reasons.append(
-            PolicyReason(
-                code="speed_exceeded",
-                message=f"Requested speed {command.speed} exceeds max_speed {max_speed}",
-            )
-        )
-        risk = max(risk, 0.7)
-
-    bound_device = claims.get("device_id")
-    if command.device_id != bound_device:
-        reasons.append(
-            PolicyReason(
-                code="device_mismatch",
-                message=(
-                    f"Command device {command.device_id} does not match "
-                    f"credential device {bound_device}"
-                ),
-            )
-        )
-        risk = max(risk, 0.9)
-
-    if store.command_burst(sub, window_seconds=5, threshold=5):
-        reasons.append(
-            PolicyReason(
-                code="command_burst",
-                message="Abnormal command burst detected for this identity",
-            )
-        )
-        risk = max(risk, 0.75)
-
-    # Contextual compromise: valid token + rogue device and/or restricted zone
-    compromise_signals = {
-        "device_mismatch",
-        "human_zone_breach",
-        "zone_forbidden",
-    }
-    should_contain = any(r.code in compromise_signals for r in reasons)
-    allowed = len(reasons) == 0
-
-    if allowed:
-        reasons.append(
-            PolicyReason(code="policy_ok", message="Command satisfies contextual policy")
-        )
-        risk = 0.05
-
-    return allowed, reasons, risk, should_contain
+    return PolicyResult(
+        allow=allow,
+        violations=violations,
+        reason=reason,
+        identity=identity,
+        jti=jti,
+        contained=contained,
+    )

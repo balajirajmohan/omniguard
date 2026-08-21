@@ -1,216 +1,105 @@
-import os
-from datetime import datetime, timezone
+import logging
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from broker.auth import TokenError, decode_token, issue_token
-from broker.config import DEFAULT_AGENT, ZONES
-from broker.isaac_adapter import IsaacAdapter
-from broker.models import (
-    BrokerStatus,
-    CommandDecision,
-    Decision,
-    MoveCommand,
-    RobotStatus,
-    TokenIssueRequest,
-    TokenIssueResponse,
-)
-from broker.policy import evaluate_command
-from broker.store import EventStore
+from broker import auth
+from broker.models import CommandRequest, CommandResponse, TokenIssueRequest
+from broker.policy import evaluate
+from broker.robot_adapter import get_robot_controller
+from broker.state import state
 
-app = FastAPI(
-    title="OmniGuard Identity Broker",
-    description=(
-        "Contextual AuthZ for physical AI fleets. "
-        "Valid credentials can still be denied when the physical intent is unsafe."
-    ),
-    version="0.1.0",
-)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("omniguard.broker")
 
+app = FastAPI(title="OmniGuard Broker")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-store = EventStore()
-adapter = IsaacAdapter(
-    store=store,
-    enabled=os.getenv("OMNIGUARD_ISAAC_ENABLED", "0") == "1",
-)
-
-
-def _bearer_token(authorization: str | None) -> str:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Missing Bearer token")
-    return authorization.split(" ", 1)[1].strip()
+robot = get_robot_controller()
 
 
 @app.get("/health")
-def health() -> dict:
-    return {"status": "ok", "service": "omniguard-broker"}
+def health():
+    return {"status": "ok"}
 
 
-@app.post("/tokens", response_model=TokenIssueResponse)
-def create_token(body: TokenIssueRequest) -> TokenIssueResponse:
-    token, claims = issue_token(
-        sub=body.sub,
-        robots=body.robots,
-        zones=body.zones,
-        max_speed=body.max_speed,
-        device_id=body.device_id,
-        ttl_seconds=body.ttl_seconds,
+@app.post("/token")
+def create_token(req: TokenIssueRequest):
+    """Demo helper to mint credentials. A real deployment issues these from
+    an identity provider, never from the broker itself."""
+    token = auth.issue_token(
+        sub=req.sub,
+        robots=req.robots,
+        zones=req.zones,
+        max_speed=req.max_speed,
+        device_id=req.device_id,
+        human_zone_authorized=req.human_zone_authorized,
+        ttl_seconds=req.ttl_seconds,
     )
-    store.add_event(
-        event_type="token_issued",
-        identity=body.sub,
-        token_jti=claims["jti"],
-        device_id=body.device_id,
-        message=f"Issued credential for {body.sub} bound to {body.device_id}",
-    )
-    return TokenIssueResponse(access_token=token, claims=claims)
+    return {"token": token}
 
 
-@app.post("/tokens/demo-agent", response_model=TokenIssueResponse)
-def create_demo_agent_token() -> TokenIssueResponse:
-    """Issue the default legitimate fleet-agent credential used in demos."""
-    token, claims = issue_token(**DEFAULT_AGENT)
-    store.add_event(
-        event_type="token_issued",
-        identity=claims["sub"],
-        token_jti=claims["jti"],
-        device_id=claims["device_id"],
-        message="Issued demo fleet-agent-01 credential",
-    )
-    return TokenIssueResponse(access_token=token, claims=claims)
+@app.post("/command", response_model=CommandResponse)
+def submit_command(request: CommandRequest):
+    result = evaluate(request)
 
+    incident_id = None
 
-@app.post("/commands/move", response_model=CommandDecision)
-def move_robot(
-    command: MoveCommand,
-    authorization: str | None = Header(default=None),
-) -> CommandDecision:
-    raw = _bearer_token(authorization)
-    try:
-        claims = decode_token(raw)
-    except TokenError as exc:
-        store.add_event(
-            event_type="auth_failure",
-            decision=Decision.DENY,
-            robot_id=command.robot_id,
-            destination_zone=command.destination_zone,
-            device_id=command.device_id,
-            message=exc.message,
-            risk_score=0.6,
+    if result.allow:
+        robot.move_to(request.robot_id, request.target_x, request.target_y, request.speed)
+        state.set_robot_state(
+            request.robot_id,
+            position=[request.target_x, request.target_y],
+            speed=request.speed,
+            zone=request.target_zone,
+            status="MOVING",
+            last_identity=result.identity,
         )
-        raise HTTPException(status_code=401, detail=exc.message) from exc
+    else:
+        if result.contained:
+            if result.jti:
+                state.revoke(result.jti)
+            if result.identity:
+                state.quarantine(result.identity)
+            robot.emergency_stop(request.robot_id)
+            state.set_robot_state(request.robot_id, status="CONTAINED")
 
-    identity = claims.get("sub", "unknown")
-    jti = claims.get("jti")
-    store.record_command_attempt(identity)
-
-    allowed, reasons, risk, should_contain = evaluate_command(claims, command, store)
-
-    if allowed:
-        result = adapter.execute_move(command)
-        decision = CommandDecision(
-            decision=Decision.ALLOW,
-            reasons=reasons,
-            command=command,
-            identity=identity,
-            token_jti=jti,
-            contained=False,
-            robot_action=result.action,
-            risk_score=risk,
-            timestamp=datetime.now(timezone.utc),
+        incident = state.record_incident(
+            identity=result.identity or "unknown",
+            robot_id=request.robot_id,
+            device_id=request.device_id,
+            target_zone=request.target_zone,
+            violations=result.violations,
+            message=(
+                f"{result.identity or 'unknown identity'} attempted to move "
+                f"{request.robot_id} into {request.target_zone} from device "
+                f"'{request.device_id}'. Command blocked"
+                + (", credential revoked and robot contained." if result.contained else ".")
+            ),
+            contained=result.contained,
         )
-        store.add_event(
-            event_type="command_allowed",
-            decision=Decision.ALLOW,
-            identity=identity,
-            token_jti=jti,
-            robot_id=command.robot_id,
-            destination_zone=command.destination_zone,
-            device_id=command.device_id,
-            message=result.detail,
-            risk_score=risk,
-        )
-        return decision
+        incident_id = incident["incident_id"]
+        logger.warning("DENY %s: %s", request.robot_id, result.reason)
 
-    # Containment path
-    contained = False
-    robot_action = "NONE"
-    if should_contain:
-        if jti:
-            store.revoke(jti)
-        store.quarantine(identity)
-        estop = adapter.emergency_stop(
-            command.robot_id,
-            reason="; ".join(r.message for r in reasons),
-        )
-        robot_action = estop.action
-        contained = True
-
-    decision = CommandDecision(
-        decision=Decision.DENY,
-        reasons=reasons,
-        command=command,
-        identity=identity,
-        token_jti=jti,
-        contained=contained,
-        robot_action=robot_action,
-        risk_score=risk,
-        timestamp=datetime.now(timezone.utc),
-    )
-    store.add_event(
-        event_type="command_denied",
-        decision=Decision.DENY,
-        identity=identity,
-        token_jti=jti,
-        robot_id=command.robot_id,
-        destination_zone=command.destination_zone,
-        device_id=command.device_id,
-        message=(
-            "Critical: credential compromise / unsafe physical intent detected. "
-            + "; ".join(r.message for r in reasons)
-        ),
-        risk_score=risk,
-        contained=contained,
-    )
-    return decision
-
-
-@app.get("/status", response_model=BrokerStatus)
-def status() -> BrokerStatus:
-    return BrokerStatus(
-        robot=RobotStatus(
-            robot_id="robot-01",
-            zone=store.robot_zone,
-            speed=store.robot_speed,
-            status=store.robot_status,
-            last_command=store.robot_last_command,
-            quarantined_identity=store.quarantined_for_robot,
-        ),
-        revoked_tokens=store.snapshot_revoked(),
-        quarantined_identities=store.snapshot_quarantined(),
-        recent_events=store.snapshot_events(),
-        zones=ZONES,
+    return CommandResponse(
+        decision="ALLOW" if result.allow else "DENY",
+        reason=result.reason,
+        violations=result.violations,
+        incident_id=incident_id,
     )
 
 
-@app.get("/events")
-def events(limit: int = 50) -> list:
-    return store.snapshot_events(limit=limit)
+@app.get("/state")
+def get_state():
+    return state.snapshot()
 
 
-@app.post("/demo/reset")
-def reset_demo() -> dict:
-    store.reset()
-    store.add_event(
-        event_type="demo_reset",
-        message="Demo state cleared — robot returned to ZONE_A / IDLE",
-    )
-    return {"ok": True, "message": "Demo state reset"}
+@app.post("/reset")
+def reset_state():
+    state.reset()
+    return {"status": "reset"}

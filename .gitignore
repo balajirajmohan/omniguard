@@ -1,22 +1,12 @@
-__pycache__/
-*.py[cod]
-*.egg-info/
 .venv/
-venv/
-.env
+__pycache__/
+*.pyc
 .DS_Store
-*.db
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.streamlit/secrets.toml
+.claude/
 
 # Terraform
-infra/terraform/.terraform/
-infra/terraform/*.tfstate
-infra/terraform/*.tfstate.*
-infra/terraform/terraform.tfvars
-infra/terraform/omniguard-isaac.pem
-infra/terraform/crash.log
-infra/terraform/override.tf
-infra/terraform/*_override.tf
+infra/.terraform/
+infra/terraform.tfstate
+infra/terraform.tfstate.*
+infra/terraform.tfvars
+infra/*.pem

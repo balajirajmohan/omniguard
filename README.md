@@ -1,134 +1,89 @@
 # OmniGuard
 
-Digital-twin red-team range for warehouse robot fleets.
+A security broker for robot fleet commands. A robot control token can be
+technically valid and still be misused — OmniGuard checks identity, robot
+authorization, destination zone, speed, device binding and command
+behavior (replay/burst) on every command, and contains the credential the
+moment something looks like a compromise.
 
-NVIDIA Omniverse / Isaac Sim provides the physically accurate world. OmniGuard adds contextual identity, authorization, and containment so a compromised agent credential cannot turn into a physical incident.
+## Status
 
-> Attack the twin. Protect the real world.
+- `broker/`, `scripts/`, `dashboard/` — done, tested locally, no GPU needed.
+- `isaac/` — written against Isaac Sim 6.0's documented API, not yet run on
+  real hardware. See [isaac/README.md](isaac/README.md) and
+  [docs/cloud_gpu_setup.md](docs/cloud_gpu_setup.md) before touching it.
+- `infra/` — Terraform for the AWS GPU instance Isaac Sim needs (this repo's
+  dev machine is macOS, which can't run Isaac Sim at all). Syntax-validated
+  with `terraform validate`, not yet applied against a real AWS account.
+  See [infra/README.md](infra/README.md) — `terraform apply` creates a
+  real, billable GPU instance, so that step is left for you to run and
+  confirm deliberately.
 
-## Architecture
-
-```text
-Operator / attack script
-        │
-        ▼
- OmniGuard identity broker (FastAPI + JWT policy)
-        │
-   ┌────┴────┐
-   │ ALLOW   │ DENY + revoke + e-stop
-   ▼         ▼
-Isaac adapter   Security dashboard
-   │
-   ▼
-Isaac Sim warehouse robot (Nova Carter)
-```
-
-## Hackathon runbook
-
-**Start here for the full event path:** [docs/RUNBOOK.md](docs/RUNBOOK.md)
-
-AWS Isaac Sim workstation (Terraform): [infra/terraform/README.md](infra/terraform/README.md)
-
-## Quick start (Checkpoint B, no Isaac required)
+## Run the broker + demo locally (no Isaac Sim required)
 
 ### Option A — Dev Container (zero local setup)
 
-Open in [VS Code](https://code.visualstudio.com/) with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) or launch directly in [GitHub Codespaces](https://codespaces.new/balajirajmohan/omniguard):
+Open in [VS Code](https://code.visualstudio.com/) with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers), or launch in GitHub Codespaces:
 
-1. Open the repo in VS Code
-2. When prompted **"Reopen in Container"**, click it (or run **Dev Containers: Reopen in Container** from the command palette)
-3. The container builds, installs all deps, and runs `honcho start` automatically
+1. Open the repo in VS Code.
+2. When prompted **"Reopen in Container"**, click it (or run **Dev Containers: Reopen in Container** from the command palette).
+3. The container builds, installs dependencies, and runs `honcho start` automatically via `.devcontainer/devcontainer.json`.
 
 - **Broker API** → http://localhost:8000 *(forwarded automatically)*
 - **Dashboard UI** → http://localhost:8501 *(opens in browser automatically)*
 
-No Python, conda, or honcho installation needed on your machine.
+### Option B — one command with honcho (local)
 
-### Option B — single command with honcho (local)
-
-[honcho](https://honcho.readthedocs.io) reads the [`Procfile`](Procfile) and starts the broker + dashboard together in one terminal with colour-coded output.
+[honcho](https://honcho.readthedocs.io) reads the [`Procfile`](Procfile) and starts the broker + dashboard together with colour-coded output.
 
 ```bash
-# First time: create and activate a conda env, then install deps
-conda create -n omniguard python=3.11 -y
-conda activate omniguard
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt   # installs honcho too
 
-# Every time after: one command starts everything
 honcho start
 ```
 
-- **Broker API** → http://localhost:8000
-- **Dashboard UI** → http://localhost:8501 *(open in browser)*
+Press `Ctrl+C` to stop both services at once.
 
-Press `Ctrl+C` to stop all services at once.
-
-### Option C — manual terminals (fallback)
+### Option C — manual terminals
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Terminal 1 — broker
-uvicorn broker.main:app --reload --port 8000
+uvicorn broker.main:app --reload   # terminal 1
 
-# Terminal 2 — legitimate move
-python clients/normal_client.py
+python3 scripts/normal_client.py   # terminal 2 — expect ALLOW
+python3 scripts/attack_client.py   # terminal 2 — expect DENY, then DENY again (revoked)
+```
 
-# Terminal 3 — stolen token attack + reuse
-python clients/attack_client.py --reuse
+## Dashboard
 
-# Optional dashboard
+```bash
 streamlit run dashboard/app.py
 ```
 
-**Checkpoint B:** normal client returns `ALLOW`; attack returns `DENY` + containment; reuse also fails.
+Buttons trigger the same normal/attack flows as the scripts, and render the
+live incident feed, revoked-token count and quarantined-identity list.
 
-## Isaac Sim (Checkpoint A)
+## Wiring in real Isaac Sim
 
-Provision with Terraform (preferred):
-
-```bash
-# 1) Accept Marketplace terms:
-# https://aws.amazon.com/marketplace/pp/prodview-bl35herdyozhw
-# 2) Deploy
-cd infra/terraform
-cp terraform.tfvars.example terraform.tfvars   # set allowed_cidr_blocks + key
-terraform init && terraform apply
-```
-
-Also see [docs/isaac-setup.md](docs/isaac-setup.md) and [docs/RUNBOOK.md](docs/RUNBOOK.md). Requires AWS `g6e.4xlarge` (L40S) — not available on macOS.
-
-After the robot moves in simulation, wire [broker/isaac_adapter.py](broker/isaac_adapter.py) to Isaac Python scripting and enable with `OMNIGUARD_ISAAC_ENABLED=1`. Details: [docs/integration.md](docs/integration.md).
-
-## Demo script
-
-See [docs/demo-script.md](docs/demo-script.md). One-shot Checkpoint B (broker already running):
+By default the broker uses `MockRobotController` (logs moves, no sim).
+Once Isaac Sim is running on a GPU host with the bridge from `isaac/`:
 
 ```bash
-bash scripts/run_checkpoint_b.sh
+export OMNIGUARD_ROBOT_BACKEND=isaac
+export ISAAC_BRIDGE_URL=http://<gpu-host-ip>:8899
+uvicorn broker.main:app --reload
 ```
 
-## API surface
+## Security model
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/health` | Liveness |
-| POST | `/tokens/demo-agent` | Issue legitimate fleet JWT |
-| POST | `/tokens` | Issue custom JWT claims |
-| POST | `/commands/move` | Contextual allow/deny + containment |
-| GET | `/status` | Robot, revocations, events |
-| GET | `/events` | Timeline |
-| POST | `/demo/reset` | Clear demo state |
-
-## Policy checks (in order)
-
-1. Token valid and unrevoked
-2. Identity allowed to control this robot
-3. Destination zone permitted
-4. Speed within `max_speed`
-5. Device ID matches credential binding
-6. Anomaly signals (human-zone intent, rogue device, command burst)
-
-On compromise signals: deny command, revoke `jti`, quarantine identity, emergency-stop.
+See the policy engine in [broker/policy.py](broker/policy.py). Every
+`/command` request is checked for: token validity/expiry, revocation,
+identity quarantine, robot authorization, zone permission (with `HUMAN_ZONE`
+requiring an explicit `human_zone_authorized` claim even if listed), speed
+limit, device binding, replay, and command burst. Any "critical" violation
+(the ones that indicate misuse rather than a benign error) triggers full
+containment: revoke the token's `jti`, quarantine the identity, emergency-
+stop the robot, and log a red incident card.
