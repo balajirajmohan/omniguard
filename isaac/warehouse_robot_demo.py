@@ -6,7 +6,8 @@ last approved via the CommandBridge HTTP server.
 
 The previous Nova Carter path was verified on AWS Isaac Sim 6.0.1. This bundled
 RidgebackFranka path must be smoke-tested on that GPU host before claiming the
-same runtime status. OmniGuard exposes only base MOVE and emergency STOP.
+same runtime status. OmniGuard exposes base MOVE/STOP plus bridge-local arm
+preset, joint and gripper commands for direct curl testing.
 
 Movement is kinematic (capped step toward target) for demo reliability — not a
 validated fleet controller. Asset paths can still shift between Isaac releases.
@@ -50,6 +51,58 @@ ZONE_WAYPOINTS = {
 
 MAX_STEP_SPEED = 2.0  # m/s safety cap regardless of what a command requests
 
+ARM_PRESETS_DEGREES = {
+    "stow": {
+        "panda_joint1": 0.0,
+        "panda_joint2": -45.0,
+        "panda_joint3": 0.0,
+        "panda_joint4": -125.0,
+        "panda_joint5": 0.0,
+        "panda_joint6": 90.0,
+        "panda_joint7": 45.0,
+    },
+    "carry": {
+        "panda_joint1": 0.0,
+        "panda_joint2": -55.0,
+        "panda_joint3": 0.0,
+        "panda_joint4": -100.0,
+        "panda_joint5": 0.0,
+        "panda_joint6": 80.0,
+        "panda_joint7": 45.0,
+    },
+    "reach": {
+        "panda_joint1": 0.0,
+        "panda_joint2": -35.0,
+        "panda_joint3": 0.0,
+        "panda_joint4": -90.0,
+        "panda_joint5": 0.0,
+        "panda_joint6": 60.0,
+        "panda_joint7": 20.0,
+    },
+    "inspect": {
+        "panda_joint1": 25.0,
+        "panda_joint2": -40.0,
+        "panda_joint3": 0.0,
+        "panda_joint4": -75.0,
+        "panda_joint5": 0.0,
+        "panda_joint6": 75.0,
+        "panda_joint7": 45.0,
+    },
+}
+
+GRIPPER_TARGETS = {
+    "open": 0.04,
+    "close": 0.0,
+}
+GRIPPER_JOINT_CANDIDATES = (
+    "panda_finger_joint1",
+    "panda_finger_joint2",
+    "finger_joint1",
+    "finger_joint2",
+    "left_finger_joint",
+    "right_finger_joint",
+)
+
 
 def main():
     assets_root_path = get_assets_root_path()
@@ -82,9 +135,85 @@ def main():
         simulation_app.close()
         return
     import omni.usd
-    from pxr import Gf, UsdGeom
+    from pxr import Gf, Usd, UsdGeom, UsdPhysics
 
     xform = UsdGeom.Xformable(robot_prim)
+
+    def normalise_name(value: str) -> str:
+        return "".join(ch for ch in value.lower() if ch.isalnum())
+
+    def iter_robot_joints():
+        for prim in Usd.PrimRange(robot_prim):
+            if prim.GetTypeName() in {"PhysicsRevoluteJoint", "PhysicsPrismaticJoint"}:
+                yield prim
+
+    def joint_names() -> list[str]:
+        return [str(prim.GetPath()) for prim in iter_robot_joints()]
+
+    def find_joint(name: str):
+        expected = normalise_name(name)
+        suffix_matches = []
+        contains_matches = []
+        for prim in iter_robot_joints():
+            actual = normalise_name(prim.GetName())
+            if actual == expected:
+                return prim
+            if actual.endswith(expected):
+                suffix_matches.append(prim)
+            elif expected in actual:
+                contains_matches.append(prim)
+        if suffix_matches:
+            return sorted(suffix_matches, key=lambda p: str(p.GetPath()))[0]
+        if contains_matches:
+            return sorted(contains_matches, key=lambda p: str(p.GetPath()))[0]
+        return None
+
+    def set_joint_drive_target(joint_prim, target: float) -> None:
+        drive_name = "linear" if joint_prim.GetTypeName() == "PhysicsPrismaticJoint" else "angular"
+        drive = UsdPhysics.DriveAPI.Get(joint_prim, drive_name)
+        if not drive:
+            drive = UsdPhysics.DriveAPI.Apply(joint_prim, drive_name)
+        target_attr = drive.GetTargetPositionAttr()
+        if not target_attr:
+            target_attr = drive.CreateTargetPositionAttr()
+        target_attr.Set(float(target))
+
+    def apply_joint_targets(targets_degrees: dict[str, float]) -> tuple[bool, list[str]]:
+        missing = []
+        applied = []
+        for name, target in targets_degrees.items():
+            joint = find_joint(name)
+            if joint is None:
+                missing.append(name)
+                continue
+            set_joint_drive_target(joint, target)
+            applied.append(str(joint.GetPath()))
+        if missing:
+            carb.log_warn(
+                "Arm command missing joints %s. Available joints: %s"
+                % (", ".join(missing), "; ".join(joint_names()))
+            )
+        if applied:
+            carb.log_info("Applied arm targets to: " + ", ".join(applied))
+        return bool(applied) and not missing, missing
+
+    def apply_gripper_action(action: str) -> tuple[bool, list[str]]:
+        target = GRIPPER_TARGETS[action]
+        applied = []
+        for name in GRIPPER_JOINT_CANDIDATES:
+            joint = find_joint(name)
+            if joint is None:
+                continue
+            set_joint_drive_target(joint, target)
+            applied.append(str(joint.GetPath()))
+        if not applied:
+            carb.log_warn(
+                "Gripper command could not find finger joints. Available joints: "
+                + "; ".join(joint_names())
+            )
+            return False, []
+        carb.log_info(f"Applied gripper {action} target to: " + ", ".join(applied))
+        return True, applied
 
     def get_position() -> np.ndarray:
         matrix = np.array(omni.usd.get_world_transform_matrix(robot_prim))
@@ -126,6 +255,46 @@ def main():
             )
             print("EMERGENCY STOP executed for", ROBOT_ID)
             continue
+
+        arm_preset = bridge.pop_arm_preset(ROBOT_ID)
+        if arm_preset is not None:
+            preset = arm_preset["preset"]
+            ok, missing = apply_joint_targets(ARM_PRESETS_DEGREES[preset])
+            if ok:
+                bridge.mark_executed(
+                    arm_preset.get("command_id"),
+                    arm={"mode": "preset", "preset": preset},
+                )
+            else:
+                bridge.mark_failed(
+                    arm_preset.get("command_id"),
+                    reason="missing joints: " + ", ".join(missing),
+                )
+
+        arm_joints = bridge.pop_arm_joints(ROBOT_ID)
+        if arm_joints is not None:
+            ok, missing = apply_joint_targets(arm_joints["targets_degrees"])
+            if ok:
+                bridge.mark_executed(
+                    arm_joints.get("command_id"),
+                    arm={"mode": "joints", "targets_degrees": arm_joints["targets_degrees"]},
+                )
+            else:
+                bridge.mark_failed(
+                    arm_joints.get("command_id"),
+                    reason="missing joints: " + ", ".join(missing),
+                )
+
+        gripper = bridge.pop_gripper(ROBOT_ID)
+        if gripper is not None:
+            ok, applied = apply_gripper_action(gripper["action"])
+            if ok:
+                bridge.mark_executed(
+                    gripper.get("command_id"),
+                    gripper={"action": gripper["action"], "joints": applied},
+                )
+            else:
+                bridge.mark_failed(gripper.get("command_id"), reason="gripper joints not found")
 
         move = bridge.pop_move(ROBOT_ID)
         if move is not None:
