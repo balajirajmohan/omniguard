@@ -82,10 +82,13 @@ SCENARIOS: list[dict[str, Any]] = [
         "speed": 1.0,
         "commands_last_10_seconds": 12,
         "previous_failures": 1,
+        "hour_of_day": 12,
+        "seconds_since_last_command": 5.0,
         "credential": VALID_TOKEN,
         "expected_signals": [],
-        "expected_action": "HOLD_OR_BLOCK",
+        "expected_action": "HOLD",
         "default_protection": True,
+        "caught_by": "ai_warning",
     },
     {
         "id": "combined_attack",
@@ -106,6 +109,28 @@ SCENARIOS: list[dict[str, Any]] = [
         ],
         "expected_action": "BLOCK",
         "default_protection": True,
+    },
+    {
+        "id": "behavioral_anomaly",
+        "title": "Unknown behavioral anomaly (AI-only)",
+        "description": (
+            "Valid token, known device, allowed zone, speed under policy max — "
+            "but atypical speed/rate/timing. Hard rules pass; IsolationForest blocks."
+        ),
+        "agent_id": "fleet-agent-01",
+        "device_id": KNOWN_DEVICE,
+        "robot_id": "robot-01",
+        "destination": "SAFE_ZONE_B",
+        "speed": 1.45,
+        "commands_last_10_seconds": 10,
+        "previous_failures": 4,
+        "hour_of_day": 3,
+        "seconds_since_last_command": 1.5,
+        "credential": VALID_TOKEN,
+        "expected_signals": [],
+        "expected_action": "BLOCK",
+        "default_protection": True,
+        "caught_by": "ai_anomaly",
     },
     {
         "id": "revoked_replay",

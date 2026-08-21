@@ -1,0 +1,205 @@
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------------
+   OmniGuard design tokens
+   Base: near-black graphite. Accent: electric cyan. State colors carry meaning
+   (emerald = allowed, amber = constrained, red-orange = denied/contained).
+   --------------------------------------------------------------------------- */
+@theme {
+  --color-void: #05070b;
+  --color-graphite: #070a0f;
+  --color-surface: #0b1018;
+  --color-surface-2: #101724;
+  --color-surface-3: #16202f;
+  --color-hairline: #1c2635;
+  --color-hairline-strong: #2a3849;
+
+  --color-ink: #e8eff7;
+  --color-ink-dim: #9db0c6;
+  --color-ink-faint: #6b7f96;
+
+  --color-cyan: #22d3ee;
+  --color-cyan-bright: #67e8f9;
+  --color-cyan-deep: #0e7490;
+
+  --color-allow: #34d399;
+  --color-allow-deep: #065f46;
+  --color-warn: #f5b544;
+  --color-warn-deep: #713f12;
+  --color-deny: #ff5533;
+  --color-deny-deep: #7f1d1d;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-hairline);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    /* Sticky nav clearance for in-page anchors. */
+    scroll-padding-top: 5.5rem;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-graphite);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-synthesis-weight: none;
+    -webkit-font-smoothing: antialiased;
+    /* Never allow sideways drift from oversized scene graphics. */
+    overflow-x: hidden;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-cyan);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--color-cyan) 32%, transparent);
+    color: #fff;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    /* Collapse decorative motion to its final frame rather than removing it. */
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* Fine engineering grid used behind hero and scene panels. */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, color-mix(in oklab, var(--color-cyan) 7%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in oklab, var(--color-cyan) 7%, transparent) 1px, transparent 1px);
+    background-size: 56px 56px;
+  }
+
+  .bg-grid-fine {
+    background-image:
+      linear-gradient(to right, color-mix(in oklab, var(--color-cyan) 5%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in oklab, var(--color-cyan) 5%, transparent) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  .mask-fade-b {
+    mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+  }
+
+  .mask-fade-edges {
+    mask-image: radial-gradient(ellipse 80% 70% at 50% 45%, #000 40%, transparent 100%);
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .tabnum {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* --- Keyframes ------------------------------------------------------------ */
+
+@keyframes og-dash {
+  to {
+    stroke-dashoffset: -240;
+  }
+}
+
+/* Gateway scan sweep. Uses userSpaceOnUse pixel offsets, since percentage
+   transforms on SVG elements resolve against the element's own bounding box. */
+@keyframes og-scan {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  12%,
+  88% {
+    opacity: 0.55;
+  }
+  100% {
+    transform: translateY(122px);
+    opacity: 0;
+  }
+}
+
+@keyframes og-pulse-ring {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+@keyframes og-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Horizontal pulse travelling along the how-it-works connector. */
+@keyframes og-flow {
+  0% {
+    transform: translateX(-6rem);
+    opacity: 0;
+  }
+  10%,
+  90% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+/* Vertical pulse travelling down the architecture chain. */
+@keyframes og-flow-v {
+  0% {
+    transform: translateY(-0.75rem);
+    opacity: 0;
+  }
+  20%,
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(1.5rem);
+    opacity: 0;
+  }
+}
+
+@keyframes og-drift {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(0, -22px, 0);
+  }
+}

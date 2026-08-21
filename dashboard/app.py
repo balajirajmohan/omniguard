@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
 import os
+import time
 
 import pandas as pd
 import requests
 import streamlit as st
 
 st.set_page_config(page_title="OmniGuard", page_icon=None, layout="wide")
-st.title("OmniGuard")
+st.title("OmniGuard Command Center")
 st.caption(
     "Browser-operated cyber-physical red-team range for robot identity attacks "
     "inside an NVIDIA Isaac Sim digital twin."
@@ -17,10 +19,8 @@ API = st.sidebar.text_input(
     "OmniGuard API URL",
     os.getenv("OMNIGUARD_API_URL", "http://localhost:8000"),
 )
-st.sidebar.caption(
-    "On a Mac, open this UI via SSM port-forward to EC2:8501 "
-    "(see docs/MAC_ACCESS.md). Do not publish the dashboard to the internet."
-)
+st.sidebar.caption("Mac access: SSM port-forward to EC2:8501 (docs/MAC_ACCESS.md).")
+auto_refresh = st.sidebar.checkbox("Auto-refresh while active", value=True)
 
 
 def post(path: str):
@@ -45,17 +45,41 @@ def get(path: str, default):
 
 health = get("/health", {})
 llm = health.get("llm") or {}
-health_cols = st.columns(4)
-health_cols[0].metric("API", health.get("status", "down").upper())
-health_cols[1].metric("Robot backend", str(health.get("robot_backend", "unknown")).upper())
-health_cols[2].metric("LLM provider", str(llm.get("provider", "fallback")).upper())
-health_cols[3].metric(
-    "LLM configured",
-    "YES" if llm.get("configured") else "NO (fallback)",
+anomaly = health.get("anomaly") or {}
+health_cols = st.columns(6)
+health_cols[0].metric("API", str(health.get("status", "down")).upper())
+health_cols[1].metric("Robot", str(health.get("robot_backend", "?")).upper())
+health_cols[2].metric(
+    "AI enforce",
+    "ON" if health.get("ai_enforcement_enabled") else "SHADOW",
 )
+health_cols[3].metric(
+    "Model",
+    "READY" if health.get("model_available") else "DOWN",
+)
+health_cols[4].metric(
+    "Artifact",
+    "VERIFIED" if health.get("artifact_verified") else "DEGRADED",
+)
+llm_label = (
+    f"{llm.get('provider')}/{llm.get('model')}"
+    if llm.get("configured")
+    else "deterministic fallback"
+)
+health_cols[5].metric("LLM", llm_label)
 
-st.subheader("Judge demo — four-button flow")
-button_columns = st.columns(4)
+with st.expander("AI anomaly model", expanded=False):
+    st.write(
+        f"**{anomaly.get('model_name')}** `{anomaly.get('model_version')}` · "
+        f"critical≥{health.get('critical_threshold')} · "
+        f"warning≥{health.get('warning_threshold')}"
+    )
+    st.caption(anomaly.get("judge_note", ""))
+    if anomaly.get("eval_metrics"):
+        st.write(anomaly["eval_metrics"])
+
+st.subheader("Judge demo")
+button_columns = st.columns(5)
 with button_columns[0]:
     if st.button("Reset Demo", use_container_width=True):
         post("/api/reset")
@@ -72,35 +96,41 @@ with button_columns[3]:
     if st.button("Attack - OmniGuard ON", use_container_width=True):
         post("/api/demo/attack?protection=true")
         st.rerun()
+with button_columns[4]:
+    if st.button("AI-only anomaly", use_container_width=True):
+        post("/api/demo/anomaly")
+        st.rerun()
 
-st.subheader("Scenario library")
+st.subheader("Scenario cards")
 scenarios = get("/api/scenarios", [])
 if scenarios:
-    titles = {s["id"]: f'{s["title"]} — {s["description"]}' for s in scenarios}
-    selected = st.selectbox(
-        "Scenario",
-        options=list(titles.keys()),
-        format_func=lambda sid: titles.get(sid, sid),
-        index=list(titles.keys()).index("combined_attack")
-        if "combined_attack" in titles
-        else 0,
-    )
-    protection_on = st.checkbox("OmniGuard protection enabled", value=True)
-    reset_first = st.checkbox(
-        "Reset state before run",
-        value=selected != "revoked_replay",
-        help="Disable for revoked-credential replay after a protected attack.",
-    )
-    if st.button("Run selected scenario", type="primary"):
-        post(
-            f"/api/scenarios/{selected}/run"
-            f"?protection={'true' if protection_on else 'false'}"
-            f"&reset_first={'true' if reset_first else 'false'}"
-        )
-        st.rerun()
+    cols = st.columns(2)
+    for idx, scenario in enumerate(scenarios):
+        with cols[idx % 2]:
+            st.markdown(f"**{scenario['title']}**")
+            st.caption(scenario.get("description", ""))
+            st.write(
+                f"Expected: `{scenario.get('expected_action')}` · "
+                f"signals: {', '.join(scenario.get('expected_signals') or ['none'])}"
+            )
+            c1, c2 = st.columns(2)
+            if c1.button("Run OFF", key=f"off-{scenario['id']}", use_container_width=True):
+                post(
+                    f"/api/scenarios/{scenario['id']}/run?protection=false&reset_first=true"
+                )
+                st.rerun()
+            if c2.button("Run ON", key=f"on-{scenario['id']}", use_container_width=True):
+                post(
+                    f"/api/scenarios/{scenario['id']}/run?protection=true&reset_first="
+                    f"{'false' if scenario.get('requires_prior_revoke') else 'true'}"
+                )
+                st.rerun()
 else:
-    st.warning("Scenario catalog unavailable — is the API running?")
+    st.warning("Scenario catalog unavailable")
 
+if st.button("Run investigation agent"):
+    post("/api/investigate")
+    st.rerun()
 if st.button("Refresh status"):
     st.rerun()
 
@@ -115,29 +145,69 @@ metric_columns[5].metric(
     "Protection", "ON" if state.get("protection_enabled", False) else "OFF"
 )
 st.caption(
-    f"Containment ack: {state.get('last_containment_ack') or 'none'} · "
-    "LLM never issues robot movement — policy + allowlisted actuation do."
+    f"Containment ack: {state.get('last_containment_ack') or 'none'} "
+    "(sent ≠ executed until Isaac acknowledgement)"
 )
+
+bridge = state.get("isaac_bridge_state") or {}
+if bridge:
+    pos = bridge.get("position") or {}
+    st.write(
+        "Live Isaac state:",
+        f"pos=({pos.get('x')}, {pos.get('y')})",
+        f"motion={bridge.get('motion_state')}",
+        f"speed={bridge.get('speed')}",
+    )
+    # Simple warehouse map
+    try:
+        import pandas as pd
+
+        map_df = pd.DataFrame(
+            [
+                {"x": float(pos.get("x") or 0.0), "y": float(pos.get("y") or 0.0)},
+                {"x": 0.0, "y": 0.0},
+                {"x": 10.0, "y": 4.0},
+                {"x": 6.0, "y": 8.0},
+            ]
+        )
+        st.scatter_chart(map_df, x="x", y="y")
+    except Exception:  # noqa: BLE001
+        pass
 
 events = get("/api/events", [])
 if events:
     latest = events[0]
-    st.divider()
+    risk = float(latest.get("anomaly_risk_score") or 0.0)
+    critical = float(health.get("critical_threshold") or 0.8)
+    warning = float(health.get("warning_threshold") or 0.6)
+    st.subheader("Risk gauge")
+    st.progress(min(max(risk, 0.0), 1.0))
+    st.write(
+        f"Risk **{risk:.2f}** · warning≥{warning} · critical≥{critical} · "
+        f"caught_by=`{latest.get('caught_by')}`"
+    )
     left, right = st.columns([1, 2])
     with left:
         decision = latest.get("final_decision")
         if decision == "BLOCK":
             st.error("COMMAND BLOCKED")
         elif decision == "HOLD":
-            st.warning("HELD FOR REVIEW")
+            st.warning("AI WARNING / HOLD")
         else:
             st.success("COMMAND ALLOWED")
-        st.metric("AI anomaly risk", latest.get("anomaly_risk_score", 0.0))
+        if latest.get("caught_by") == "ai_anomaly":
+            st.warning("Caught by AI (hard policy would ALLOW)")
+        elif latest.get("caught_by") == "hard_policy":
+            st.info("Caught by hard policy")
+        elif latest.get("caught_by") == "ai_warning":
+            st.warning("AI warning band")
+        elif latest.get("caught_by") == "ai_shadow":
+            st.info("AI shadow alert (not enforced)")
         st.write("Policy:", latest.get("policy_decision"))
+        st.write("Hard policy would block:", latest.get("hard_policy_would_block"))
         st.write("Reasons:", ", ".join(latest.get("reasons", [])) or "None")
-        features = latest.get("anomaly_features") or {}
-        if features:
-            st.write("Anomaly features:", features)
+        st.write("Behavior source:", (latest.get("behavior") or {}).get("source"))
+        st.write("Features:", latest.get("anomaly_features"))
     with right:
         st.subheader("Ordered response")
         for action in latest.get("actions", []):
@@ -146,40 +216,55 @@ if events:
         if explanation:
             st.subheader("Incident analyst")
             if isinstance(explanation, dict):
-                provider = explanation.get("provider", "fallback")
-                model = explanation.get("model", "n/a")
-                fallback = explanation.get("fallback_used", True)
-                badge = (
-                    f"Provider: **{provider}** · Model: `{model}`"
-                    + (" · **fallback**" if fallback else " · live LLM")
+                mode = (
+                    "deterministic fallback"
+                    if explanation.get("fallback_used")
+                    else "live LLM"
                 )
-                st.caption(badge)
+                st.caption(
+                    f"{explanation.get('provider')}/{explanation.get('model')} · {mode}"
+                    + (
+                        f" · reason={explanation.get('fallback_reason')}"
+                        if explanation.get("fallback_reason")
+                        else ""
+                    )
+                )
                 st.info(explanation.get("summary", str(explanation)))
-                if explanation.get("physical_impact"):
-                    st.write("Physical impact:", explanation["physical_impact"])
-                if explanation.get("recommended_actions"):
-                    st.write("Recommended:")
-                    for item in explanation["recommended_actions"]:
-                        st.write(f"- {item}")
             else:
                 st.info(explanation)
+        st.download_button(
+            "Export latest incident JSON",
+            data=json.dumps(get("/api/incidents/latest", {}), indent=2),
+            file_name="omniguard-incident.json",
+            mime="application/json",
+        )
 
     st.subheader("Evidence timeline")
+    timeline = latest.get("timeline") or get("/api/timeline", [])
+    if timeline:
+        st.dataframe(pd.DataFrame(timeline), use_container_width=True, hide_index=True)
     rows = []
     for event in events:
         rows.append(
             {
                 "time": event.get("timestamp"),
-                "agent": event.get("agent_id"),
-                "device": event.get("device_id"),
-                "destination": event.get("destination"),
-                "speed": event.get("speed"),
+                "decision": event.get("final_decision"),
+                "caught_by": event.get("caught_by"),
                 "AI risk": event.get("anomaly_risk_score"),
                 "policy": event.get("policy_decision"),
-                "decision": event.get("final_decision"),
+                "hard_policy": event.get("hard_policy_would_block"),
                 "actions": ", ".join(event.get("actions", [])),
             }
         )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 else:
-    st.info("Click Normal Operation or run a scenario to begin.")
+    st.info("Run Normal Operation or a scenario card to begin.")
+
+if auto_refresh and state.get("robot_status") in {
+    "MOVING",
+    "CONTAINED",
+    "CONTAINMENT_FAILED",
+}:
+    if state.get("last_containment_ack") in {"ESTOP_QUEUED", "CONTAINMENT_REQUESTED", "STOP_QUEUED"}:
+        time.sleep(1.5)
+        st.rerun()

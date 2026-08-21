@@ -1,0 +1,14 @@
+{
+  "feature_names": [
+    "speed",
+    "known_device",
+    "restricted_destination",
+    "commands_last_10_seconds",
+    "previous_failures",
+    "hour_of_day",
+    "seconds_since_last_command"
+  ],
+  "train_only_on": "normal",
+  "n_normal": 5000,
+  "note": "Attack labels in eval_commands.csv are for demonstration/evaluation only \u2014 not used to fit IsolationForest."
+}

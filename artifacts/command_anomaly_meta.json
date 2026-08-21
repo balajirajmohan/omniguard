@@ -1,0 +1,378 @@
+{
+  "model_name": "IsolationForest",
+  "model_version": "iforest-v1",
+  "feature_names": [
+    "speed",
+    "known_device",
+    "restricted_destination",
+    "commands_last_10_seconds",
+    "previous_failures",
+    "hour_of_day",
+    "seconds_since_last_command"
+  ],
+  "trained_on": "synthetic_normal_commands_only",
+  "dataset_label": "synthetic",
+  "n_training_samples": 5000,
+  "n_eval_samples": 48,
+  "contamination": 0.03,
+  "random_state": 42,
+  "trained_at": "2026-08-21T17:39:58.811766+00:00",
+  "critical_risk_threshold": 0.8,
+  "warning_risk_threshold": 0.6,
+  "model_sha256": "550a71167f7af5a75b59b1d5bf758769a30a1c00bce1d6b63d8c094c96222935",
+  "dependency_versions": {
+    "python": "3.12.4",
+    "numpy": "2.5.2",
+    "scikit_learn": "1.9.0",
+    "joblib": "1.5.3"
+  },
+  "eval_metrics": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "false_positive_rate": 0.0,
+    "tp": 8,
+    "fp": 0,
+    "tn": 40,
+    "fn": 0,
+    "note": "Evaluation set mixes synthetic normals and hand-crafted attack demonstrations. Not production-grade validation."
+  },
+  "eval_results": [
+    {
+      "scenario": "eval_normal_0",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.3,
+      "raw_score": 0.08415771898006041
+    },
+    {
+      "scenario": "eval_normal_1",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.74,
+      "raw_score": 0.008384910330905493
+    },
+    {
+      "scenario": "eval_normal_2",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.53,
+      "raw_score": 0.04510375653357113
+    },
+    {
+      "scenario": "eval_normal_3",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.28,
+      "raw_score": 0.08774454188557301
+    },
+    {
+      "scenario": "eval_normal_4",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.21,
+      "raw_score": 0.10418276118320058
+    },
+    {
+      "scenario": "eval_normal_5",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.7,
+      "raw_score": 0.016076597787822666
+    },
+    {
+      "scenario": "eval_normal_6",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.71,
+      "raw_score": 0.01363652766127188
+    },
+    {
+      "scenario": "eval_normal_7",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.35,
+      "raw_score": 0.07487322688511999
+    },
+    {
+      "scenario": "eval_normal_8",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.33,
+      "raw_score": 0.07917818334484517
+    },
+    {
+      "scenario": "eval_normal_9",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.36,
+      "raw_score": 0.07324664120340074
+    },
+    {
+      "scenario": "eval_normal_10",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.23,
+      "raw_score": 0.09942242468012547
+    },
+    {
+      "scenario": "eval_normal_11",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.43,
+      "raw_score": 0.06063073918489903
+    },
+    {
+      "scenario": "eval_normal_12",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.29,
+      "raw_score": 0.08494386305384749
+    },
+    {
+      "scenario": "eval_normal_13",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.26,
+      "raw_score": 0.09247478605664072
+    },
+    {
+      "scenario": "eval_normal_14",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.53,
+      "raw_score": 0.04475573282663681
+    },
+    {
+      "scenario": "eval_normal_15",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.31,
+      "raw_score": 0.08273874751558663
+    },
+    {
+      "scenario": "eval_normal_16",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.23,
+      "raw_score": 0.09946091171558641
+    },
+    {
+      "scenario": "eval_normal_17",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.37,
+      "raw_score": 0.07087816982715356
+    },
+    {
+      "scenario": "eval_normal_18",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.3,
+      "raw_score": 0.08444029186840651
+    },
+    {
+      "scenario": "eval_normal_19",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.73,
+      "raw_score": 0.009866093556405442
+    },
+    {
+      "scenario": "eval_normal_20",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.31,
+      "raw_score": 0.0817524993906219
+    },
+    {
+      "scenario": "eval_normal_21",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.53,
+      "raw_score": 0.045020911591970525
+    },
+    {
+      "scenario": "eval_normal_22",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.52,
+      "raw_score": 0.046552149665818
+    },
+    {
+      "scenario": "eval_normal_23",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.49,
+      "raw_score": 0.05175137002690755
+    },
+    {
+      "scenario": "eval_normal_24",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.44,
+      "raw_score": 0.059276384654511016
+    },
+    {
+      "scenario": "eval_normal_25",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.49,
+      "raw_score": 0.05106617105962352
+    },
+    {
+      "scenario": "eval_normal_26",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.39,
+      "raw_score": 0.06719541698630849
+    },
+    {
+      "scenario": "eval_normal_27",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.52,
+      "raw_score": 0.046377615164467145
+    },
+    {
+      "scenario": "eval_normal_28",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.51,
+      "raw_score": 0.04828349813817756
+    },
+    {
+      "scenario": "eval_normal_29",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.3,
+      "raw_score": 0.08458556224960379
+    },
+    {
+      "scenario": "eval_normal_30",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.3,
+      "raw_score": 0.08314234030632905
+    },
+    {
+      "scenario": "eval_normal_31",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.23,
+      "raw_score": 0.09760026175816056
+    },
+    {
+      "scenario": "eval_normal_32",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.26,
+      "raw_score": 0.09237509072565364
+    },
+    {
+      "scenario": "eval_normal_33",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.5,
+      "raw_score": 0.049846582938742556
+    },
+    {
+      "scenario": "eval_normal_34",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.52,
+      "raw_score": 0.046935549302661084
+    },
+    {
+      "scenario": "eval_normal_35",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.31,
+      "raw_score": 0.08114895293345836
+    },
+    {
+      "scenario": "eval_normal_36",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.56,
+      "raw_score": 0.04045686649356295
+    },
+    {
+      "scenario": "eval_normal_37",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.51,
+      "raw_score": 0.04914204813020295
+    },
+    {
+      "scenario": "eval_normal_38",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.41,
+      "raw_score": 0.06481175569937547
+    },
+    {
+      "scenario": "eval_normal_39",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.23,
+      "raw_score": 0.09867028972772318
+    },
+    {
+      "scenario": "known_compromise",
+      "label": 1,
+      "predicted_anomaly": true,
+      "risk": 0.91,
+      "raw_score": -0.04289151636402122
+    },
+    {
+      "scenario": "behavioral_anomaly",
+      "label": 1,
+      "predicted_anomaly": true,
+      "risk": 0.91,
+      "raw_score": -0.04289151636402122
+    },
+    {
+      "scenario": "behavioral_anomaly_alt",
+      "label": 1,
+      "predicted_anomaly": true,
+      "risk": 0.91,
+      "raw_score": -0.04289151636402122
+    },
+    {
+      "scenario": "off_hours_burst",
+      "label": 1,
+      "predicted_anomaly": true,
+      "risk": 0.93,
+      "raw_score": -0.05134110338030595
+    },
+    {
+      "scenario": "speed_creep",
+      "label": 1,
+      "predicted_anomaly": true,
+      "risk": 0.93,
+      "raw_score": -0.05134110338030595
+    },
+    {
+      "scenario": "burst_day",
+      "label": 1,
+      "predicted_anomaly": true,
+      "risk": 0.86,
+      "raw_score": -0.022314009283207037
+    },
+    {
+      "scenario": "failure_streak",
+      "label": 1,
+      "predicted_anomaly": true,
+      "risk": 0.91,
+      "raw_score": -0.04289151636402122
+    },
+    {
+      "scenario": "rogue_combo",
+      "label": 1,
+      "predicted_anomaly": true,
+      "risk": 0.91,
+      "raw_score": -0.04289151636402122
+    }
+  ],
+  "judge_note": "IsolationForest is trained only on synthetic normal fleet behavior. The attack samples are used for demonstration and evaluation, not to teach every attack."
+}
