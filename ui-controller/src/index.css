@@ -1,0 +1,128 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/* Palette: "Vault dark blue + secure green" from the design system, with one
+ * verified correction. Its raw #059669 / #DC2626 measure 4.26:1 and 3.32:1 on
+ * the card surface — both below the 4.5:1 body-text floor. They are kept for
+ * fills, borders and glows; text uses the lighter tints, which measure
+ * 8.35:1 and 5.80:1. Same hue, legible. */
+@theme {
+  --color-bg:        #0F172A;
+  --color-surface:   #192134;
+  --color-elevated:  #1E2839;
+  --color-sunken:    #10192E;
+  --color-line:      rgba(255,255,255,.08);
+  --color-line-hi:   rgba(255,255,255,.16);
+
+  --color-txt:       #FFFFFF;
+  --color-dim:       #CBD5E1;  /* 10.8:1 on card */
+  --color-faint:     #94A3B8;  /*  6.3:1 on card — the floor, never go dimmer */
+
+  --color-ok:        #34D399;
+  --color-ok-solid:  #059669;
+  --color-bad:       #F87171;
+  --color-bad-solid: #DC2626;
+  --color-warn:      #FBBF24;
+  --color-info:      #60A5FA;
+  --color-primary:   #1E3A5F;
+
+  --font-sans: "Inter Variable", Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  /* Density 8/10 — dashboard scale */
+  --spacing-gap: 0.75rem;
+
+  --ease-back: cubic-bezier(.34, 1.56, .64, 1);
+}
+
+@layer base {
+  html { color-scheme: dark; }
+  body {
+    @apply bg-bg text-txt antialiased;
+    font-family: var(--font-sans);
+    background-image:
+      radial-gradient(1000px 560px at 10% -14%, rgba(30,58,95,.55), transparent 60%),
+      radial-gradient(820px 480px at 94% -6%, rgba(5,150,105,.14), transparent 58%);
+    background-attachment: fixed;
+  }
+  h1, h2, h3 { @apply font-semibold tracking-tight; }
+
+  /* Every interactive control keeps a visible focus ring. */
+  :where(a, button, input, [tabindex]):focus-visible {
+    @apply outline-none ring-2 ring-info ring-offset-2 ring-offset-bg rounded-lg;
+  }
+  ::-webkit-scrollbar { width: 7px; height: 7px; }
+  ::-webkit-scrollbar-thumb { background: #2b3852; border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a4a68; }
+  ::-webkit-scrollbar-track { background: transparent; }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line;
+    background: linear-gradient(168deg, color-mix(in srgb, var(--color-surface) 96%, white), var(--color-bg));
+    box-shadow: 0 20px 44px -28px rgba(0,0,0,.92), inset 0 1px 0 rgba(255,255,255,.05);
+  }
+  .label {
+    @apply block text-[9.5px] font-semibold uppercase tracking-[.14em] text-faint;
+  }
+  .field {
+    @apply w-full rounded-xl border border-line bg-sunken px-3 py-2.5 font-mono
+           text-[12.5px] text-txt outline-none transition-colors duration-200
+           placeholder:text-faint/70 focus:border-info;
+  }
+  .btn {
+    @apply inline-flex cursor-pointer items-center gap-2 rounded-xl border border-line
+           bg-elevated px-4 py-2.5 text-sm font-semibold text-dim
+           transition-all duration-200 hover:border-line-hi hover:text-txt
+           active:scale-[.97] disabled:cursor-not-allowed disabled:opacity-55;
+  }
+  .btn-primary {
+    @apply border-transparent text-white hover:border-transparent;
+    background: linear-gradient(180deg, #0ea472, var(--color-ok-solid));
+    box-shadow: 0 8px 22px -12px rgba(5,150,105,.9);
+  }
+  .btn-primary:hover { filter: brightness(1.09); }
+
+  /* Reserves vertical space so async content cannot shove the panel around. */
+  .slot { @apply block; min-height: var(--slot-h, 0px); }
+}
+
+/* ------------------------------------------------------------- motion --- */
+@keyframes og-rise   { from { opacity:0; transform: translateY(8px) scale(.98) } to { opacity:1; transform:none } }
+@keyframes og-pulse  { 0%,100% { opacity:1 } 50% { opacity:.3 } }
+@keyframes og-sweep  { from { transform: translateX(-110%) } to { transform: translateX(320%) } }
+@keyframes og-radar  { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+@keyframes og-flash  { from { background-color: rgba(96,165,250,.22) } to { background-color: transparent } }
+@keyframes og-ping   { 0% { transform:scale(.7); opacity:.85 } 100% { transform:scale(2.4); opacity:0 } }
+@keyframes og-shimmer{ from { background-position: -180% 0 } to { background-position: 280% 0 } }
+
+.a-rise    { animation: og-rise .42s var(--ease-back) both; }
+.a-pulse   { animation: og-pulse 1s ease-in-out infinite; }
+.a-sweep   { animation: og-sweep 2s linear infinite; }
+.a-radar   { animation: og-radar 4.5s linear infinite; transform-origin: center; }
+.a-flash   { animation: og-flash .55s ease-out; }
+.a-ping    { animation: og-ping 1.5s ease-out infinite; }
+.a-shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.09), transparent);
+  background-size: 180% 100%;
+  animation: og-shimmer 1.5s linear infinite;
+}
+
+/* Stagger for grid entrances — the design system's back.out(1.4) list preset,
+ * done with delays instead of pulling in an animation library. */
+.a-stagger > * { animation: og-rise .42s var(--ease-back) both; }
+.a-stagger > *:nth-child(1) { animation-delay: .04s }
+.a-stagger > *:nth-child(2) { animation-delay: .10s }
+.a-stagger > *:nth-child(3) { animation-delay: .16s }
+.a-stagger > *:nth-child(4) { animation-delay: .22s }
+.a-stagger > *:nth-child(5) { animation-delay: .28s }
+.a-stagger > *:nth-child(6) { animation-delay: .34s }
+
+@media (prefers-reduced-motion: reduce) {
+  .a-rise, .a-pulse, .a-sweep, .a-radar, .a-flash, .a-ping, .a-shimmer,
+  .a-stagger > * {
+    animation: none !important;
+  }
+  * { transition-duration: 1ms !important; }
+}
