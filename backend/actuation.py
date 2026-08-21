@@ -94,6 +94,41 @@ def maybe_actuate_stop(robot_id: str) -> ActuationResult | None:
     return ActuationResult(ok, stage, command_id=command_id)
 
 
+def maybe_actuate_arm_preset(robot_id: str, preset: str) -> ActuationResult | None:
+    if os.getenv("OMNIGUARD_ROBOT_BACKEND", "mock").lower() != "isaac":
+        return None
+    from broker.robot_adapter import IsaacRobotController
+
+    queued = IsaacRobotController().arm_preset_queued(robot_id, preset)
+    if not queued.get("ok"):
+        return ActuationResult(False, "FAILED", detail=queued.get("error"))
+    return ActuationResult(True, "QUEUED", command_id=queued.get("command_id"))
+
+
+def maybe_actuate_arm_joints(
+    robot_id: str, targets_degrees: dict[str, float]
+) -> ActuationResult | None:
+    if os.getenv("OMNIGUARD_ROBOT_BACKEND", "mock").lower() != "isaac":
+        return None
+    from broker.robot_adapter import IsaacRobotController
+
+    queued = IsaacRobotController().arm_joints_queued(robot_id, targets_degrees)
+    if not queued.get("ok"):
+        return ActuationResult(False, "FAILED", detail=queued.get("error"))
+    return ActuationResult(True, "QUEUED", command_id=queued.get("command_id"))
+
+
+def maybe_actuate_gripper(robot_id: str, action: str) -> ActuationResult | None:
+    if os.getenv("OMNIGUARD_ROBOT_BACKEND", "mock").lower() != "isaac":
+        return None
+    from broker.robot_adapter import IsaacRobotController
+
+    queued = IsaacRobotController().gripper_queued(robot_id, action)
+    if not queued.get("ok"):
+        return ActuationResult(False, "FAILED", detail=queued.get("error"))
+    return ActuationResult(True, "QUEUED", command_id=queued.get("command_id"))
+
+
 def fetch_bridge_state() -> dict[str, Any] | None:
     if os.getenv("OMNIGUARD_ROBOT_BACKEND", "mock").lower() != "isaac":
         return None
