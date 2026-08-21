@@ -7,14 +7,14 @@ and the GPT troubleshooting / agentic-AI handoff (commit `35a5f90` baseline).
 
 **Keep Srikanth's working JWT + Isaac stack. Make the runbook/starter kit the primary event demo.**
 
-| Layer | Owner / source | Role now |
-|-------|----------------|----------|
-| `backend/` | Runbook + starter kit | Primary `:8000` API, scenarios, IsolationForest, incident AI |
-| `broker/` | Srikanth | Preserved JWT `/token`+`/command` on `:8001`, policy, state, robot_adapter |
-| `isaac/` | Srikanth (+ live 6.0.1 patch) | `command_bridge.py`, `warehouse_robot_demo.py` (NVIDIA/NovaCarter path) |
-| `infra/` | Srikanth (+ Marketplace terraform) | GPU provisioning options |
-| `simulator/` | Starter kit | Polling fake robot (laptop); optional poll bridge |
-| `dashboard/` | Starter kit UI | Four buttons + scenario library against `backend` |
+| Layer        | Owner / source                     | Role now                                                                   |
+| ------------ | ---------------------------------- | -------------------------------------------------------------------------- |
+| `backend/`   | Runbook + starter kit              | Primary `:8000` API, scenarios, IsolationForest, incident AI               |
+| `broker/`    | Srikanth                           | Preserved JWT `/token`+`/command` on `:8001`, policy, state, robot_adapter |
+| `isaac/`     | Srikanth (+ 6.0.1 robot rework)    | Command bridge plus iw.hub → UR10e → Robotiq 2F-140 assembly/demo          |
+| `infra/`     | Srikanth (+ Marketplace terraform) | GPU provisioning options                                                   |
+| `simulator/` | Starter kit                        | Polling fake robot (laptop); optional poll bridge                          |
+| `dashboard/` | Starter kit UI                     | Four buttons + scenario library against `backend`                          |
 
 Dead leftovers from the pre-merge Cursor path (`broker/store.py`, `broker/isaac_adapter.py`, `broker/config.py`, `clients/`) stay **removed**.
 
@@ -28,7 +28,8 @@ Dead leftovers from the pre-merge Cursor path (`broker/store.py`, `broker/isaac_
 
 ## Handoff corrections already applied
 
-- Nova Carter USD path for Isaac Sim 6.0.1 under `Robots/NVIDIA/`.
+- Isaac Sim 6.0.1 catalog paths and runtime Robot Assembler composition for
+  iw.hub, UR10e, and Robotiq 2F-140; GPU mount acceptance remains explicit.
 - Explicit Isaac service script (fake robot ambiguity removed).
 - Scenario catalog API + browser scenario runner.
 - LLM provider disclosure + OpenAI/Bedrock optional path with deterministic fallback.

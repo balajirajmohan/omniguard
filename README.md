@@ -8,16 +8,16 @@ A stolen fleet credential may still authenticate. OmniGuard checks identity cont
 
 ## Status (honest)
 
-| Layer | Status |
-|-------|--------|
-| Zero-Trust policy + containment | Working |
-| IsolationForest (server-derived features) | Working — artifact checksum + schema checks |
-| Four-button + scenario command center | Working |
-| Fake-robot laptop path | Working |
-| Isaac bridge auth + command ack | Working (bind `127.0.0.1`, token required) |
-| Mac browser via SSM | Documented |
-| Live LLM | Optional (`openai` / `bedrock` / `anthropic`); default deterministic fallback |
-| Investigation agent | Recommend-only tools; never moves robots |
+| Layer                                | Status                                                            |
+| ------------------------------------ | ----------------------------------------------------------------- |
+| Zero-Trust policy + containment      | Working                                                           |
+| IsolationForest anomaly risk         | Working                                                           |
+| Four-button + scenario dashboard     | Working (browser)                                                 |
+| Fake-robot laptop path               | Working (no GPU)                                                  |
+| Isaac Sim 6.0.1 move / e-stop bridge | Proven on AWS L40S (`:8899`); new composite awaits GPU acceptance |
+| Real Claude / OpenAI explanation     | Optional via env; defaults to labeled fallback                    |
+| Mac browser via SSM port-forward     | Documented — run on operator laptop                               |
+| Production IAM / fleet controller    | Out of scope for hackathon                                        |
 
 **Safety boundary:** AI may score and explain. Physical stop, revoke and quarantine stay in deterministic allowlisted code. An LLM never issues robot movement commands.
 
@@ -31,17 +31,17 @@ Mac browser (preferred operator UI)
   -> policy + IsolationForest (+ optional LLM explanation)
   -> Isaac actuation adapter
   -> Isaac CommandBridge :8899
-  -> Nova Carter in Isaac Sim
+  -> iw.hub + UR10e + Robotiq 2F-140 in Isaac Sim
 ```
 
 Laptop / CI path uses the same API with `simulator/fake_robot.py` instead of Isaac.
 
 ## Two preserved API paths
 
-| Path | Port | Role |
-|------|------|------|
+| Path                                | Port     | Role                                                                      |
+| ----------------------------------- | -------- | ------------------------------------------------------------------------- |
 | **Primary demo** `backend.main:app` | **8000** | Four-button + scenario catalog, anomaly, incident AI, optional Isaac push |
-| **JWT broker** `broker.main:app` | **8001** | Srikanth JWT `/token` + `/command`, replay/burst, `robot_adapter` |
+| **JWT broker** `broker.main:app`    | **8001** | Srikanth JWT `/token` + `/command`, replay/burst, `robot_adapter`         |
 
 ## Quick start — laptop (no GPU)
 
@@ -52,10 +52,10 @@ bash scripts/run_demo.sh
 pytest -q
 ```
 
-| Surface | URL |
-|---------|-----|
-| Dashboard | http://127.0.0.1:8501 |
-| API docs | http://127.0.0.1:8000/docs |
+| Surface   | URL                        |
+| --------- | -------------------------- |
+| Dashboard | http://127.0.0.1:8501      |
+| API docs  | http://127.0.0.1:8000/docs |
 
 Judge buttons: **Reset** · **Normal** · **Attack - Protection OFF** · **Attack - OmniGuard ON**
 
@@ -79,11 +79,17 @@ bash scripts/run_isaac_services.sh
 
 4. From your Mac, forward the dashboard: [docs/MAC_ACCESS.md](docs/MAC_ACCESS.md)
 
-Isaac Sim **6.0.1** Nova Carter asset path (committed):
+Isaac Sim **6.0.1** robot assets (committed):
 
 ```text
-/Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd
+/Isaac/Robots/Idealworks/iwhub/iw_hub.usd
+/Isaac/Robots/UniversalRobots/ur10e/ur10e.usd
+/Isaac/Robots/Robotiq/2F-140/Robotiq_2F_140_config.usd
 ```
+
+The script assembles these bundled assets at runtime. See
+[`isaac/README.md`](isaac/README.md) for mount overrides and the required GPU
+visual/MOVE/STOP acceptance checks.
 
 ## Optional LLM explanation
 
@@ -140,7 +146,7 @@ backend/     primary demo API, scenarios, anomaly, incident AI
 broker/      JWT broker + robot_adapter (preserved)
 dashboard/   Streamlit operator UI
 simulator/   fake_robot (+ poll contract)
-isaac/       CommandBridge + warehouse_robot_demo.py
+isaac/       CommandBridge + mobile-manipulator assembly + warehouse demo
 scripts/     setup, run_demo, run_isaac_services, getomni, JWT clients
 docs/        RUNBOOK, MAC_ACCESS, ALIGNMENT, demo script
 tests/       FastAPI contract tests
@@ -148,10 +154,10 @@ tests/       FastAPI contract tests
 
 ## Docs
 
-- [docs/RUNBOOK.md](docs/RUNBOOK.md) — event plan  
-- [docs/MAC_ACCESS.md](docs/MAC_ACCESS.md) — Mac → EC2 via SSM  
-- [docs/ALIGNMENT.md](docs/ALIGNMENT.md) — dual-path reconciliation  
-- [docs/demo-script.md](docs/demo-script.md)  
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) — event plan
+- [docs/MAC_ACCESS.md](docs/MAC_ACCESS.md) — Mac → EC2 via SSM
+- [docs/ALIGNMENT.md](docs/ALIGNMENT.md) — dual-path reconciliation
+- [docs/demo-script.md](docs/demo-script.md)
 - [isaac/README.md](isaac/README.md)
 
 ## Judge line

@@ -25,19 +25,20 @@ The project is complete when these four buttons work:
 
 Expected results:
 
-| Button | Expected result |
-|---|---|
-| Normal Operation | Robot moves safely; command is allowed |
-| Attack - Protection OFF | Dangerous command reaches the simulated robot |
-| Attack - OmniGuard ON | Command is blocked; robot stops; credential is revoked |
-| Reset Demo | Robot and credential return to their initial states |
+| Button                  | Expected result                                        |
+| ----------------------- | ------------------------------------------------------ |
+| Normal Operation        | Robot moves safely; command is allowed                 |
+| Attack - Protection OFF | Dangerous command reaches the simulated robot          |
+| Attack - OmniGuard ON   | Command is blocked; robot stops; credential is revoked |
+| Reset Demo              | Robot and credential return to their initial states    |
 
 ### Live AWS / Isaac (judge path)
 
 1. Laptop/mock: `bash scripts/run_demo.sh` (starts fake robot — fine for CI).
 2. Isaac: launch `isaac/warehouse_robot_demo.py` in DCV until `:8899` listens, then `bash scripts/run_isaac_services.sh` (**no** fake robot).
 3. Mac UI: SSM port-forward — see [MAC_ACCESS.md](MAC_ACCESS.md).
-4. Nova Carter path on Isaac 6.0.1: `/Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd`.
+4. Isaac 6.0.1 robot: assemble bundled iw.hub + UR10e + Robotiq 2F-140 assets;
+   complete the mount/MOVE/STOP checks in [isaac-setup.md](isaac-setup.md).
 
 Do not call the product "complete" after curl smoke tests alone — judges need the browser scenario flow.
 
@@ -45,11 +46,11 @@ Do not call the product "complete" after curl smoke tests alone — judges need 
 
 For a three-person team:
 
-| Owner | Responsibility | First checkpoint |
-|---|---|---|
-| Simulator owner | GPU access and Isaac Sim | Robot moves and stops using Python |
-| Security owner | FastAPI, policy and anomaly model | Normal request allowed; attack blocked |
-| Experience owner | Streamlit, LLM, story and slides | Dashboard shows normal and attack events |
+| Owner            | Responsibility                    | First checkpoint                         |
+| ---------------- | --------------------------------- | ---------------------------------------- |
+| Simulator owner  | GPU access and Isaac Sim          | Robot moves and stops using Python       |
+| Security owner   | FastAPI, policy and anomaly model | Normal request allowed; attack blocked   |
+| Experience owner | Streamlit, LLM, story and slides  | Dashboard shows normal and attack events |
 
 For a two-person team, combine Security and Experience. Only one person should work inside the Isaac Sim graphical session.
 
@@ -105,15 +106,15 @@ STATE = {
 
 Create these API endpoints:
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `GET` | `/health` | Confirms backend is alive |
-| `POST` | `/api/reset` | Resets robot, credential and events |
-| `POST` | `/api/commands` | Evaluates and queues a movement command |
-| `GET` | `/api/robots/robot-01/next-command` | Simulator fetches the next allowed command |
-| `POST` | `/api/robots/robot-01/telemetry` | Simulator reports position/status |
-| `GET` | `/api/state` | Dashboard reads current state |
-| `GET` | `/api/events` | Dashboard reads the event timeline |
+| Method | Endpoint                            | Purpose                                    |
+| ------ | ----------------------------------- | ------------------------------------------ |
+| `GET`  | `/health`                           | Confirms backend is alive                  |
+| `POST` | `/api/reset`                        | Resets robot, credential and events        |
+| `POST` | `/api/commands`                     | Evaluates and queues a movement command    |
+| `GET`  | `/api/robots/robot-01/next-command` | Simulator fetches the next allowed command |
+| `POST` | `/api/robots/robot-01/telemetry`    | Simulator reports position/status          |
+| `GET`  | `/api/state`                        | Dashboard reads current state              |
+| `GET`  | `/api/events`                       | Dashboard reads the event timeline         |
 
 Run it:
 
@@ -130,7 +131,7 @@ curl http://localhost:8000/health
 Expected:
 
 ```json
-{"status":"ok"}
+{"status": "ok"}
 ```
 
 Checkpoint A: Do not continue until `/health` works.
@@ -446,33 +447,33 @@ Close with:
 
 ## 17. Timeline
 
-| Time | Required outcome |
-|---|---|
-| Hour 0-1 | Roles assigned; repository ready; GPU smoke test started; backend `/health` works |
-| Hour 1-3 | Normal allowed and attack blocked through API; fake robot works |
-| Hour 3-6 | Isaac scene loads; robot moves and stops using Python |
-| Hour 6-9 | Isaac bridge receives allowed and stop commands |
-| Hour 9-12 | Dashboard buttons and timeline work |
-| Hour 12-14 | IsolationForest and risk display work |
-| Hour 14-16 | Claude/OpenAI explanation works |
-| Hour 16-18 | UI polish and complete demo rehearsal |
-| Hour 18-20 | Slides, architecture and backup recording |
-| Hour 20-22 | Freeze code; rehearse; export evidence and video |
+| Time       | Required outcome                                                                  |
+| ---------- | --------------------------------------------------------------------------------- |
+| Hour 0-1   | Roles assigned; repository ready; GPU smoke test started; backend `/health` works |
+| Hour 1-3   | Normal allowed and attack blocked through API; fake robot works                   |
+| Hour 3-6   | Isaac scene loads; robot moves and stops using Python                             |
+| Hour 6-9   | Isaac bridge receives allowed and stop commands                                   |
+| Hour 9-12  | Dashboard buttons and timeline work                                               |
+| Hour 12-14 | IsolationForest and risk display work                                             |
+| Hour 14-16 | Claude/OpenAI explanation works                                                   |
+| Hour 16-18 | UI polish and complete demo rehearsal                                             |
+| Hour 18-20 | Slides, architecture and backup recording                                         |
+| Hour 20-22 | Freeze code; rehearse; export evidence and video                                  |
 
 If more than two hours behind, remove features. Never move the final rehearsal deadline.
 
 ## 18. Failure Ladder
 
-| Failure | Immediate fallback |
-|---|---|
-| No GPU allocation | Continue backend/dashboard/fake robot |
+| Failure                        | Immediate fallback                                     |
+| ------------------------------ | ------------------------------------------------------ |
+| No GPU allocation              | Continue backend/dashboard/fake robot                  |
 | Isaac Sim installation problem | Use organizer's AMI/Launchable; do not rebuild drivers |
-| Warehouse too heavy | Blank floor plus shelves/cubes and one robot |
-| Robot navigation fails | Script transform/waypoint movement |
-| Network connection fails | Run backend on GPU workstation |
-| IsolationForest misbehaves | Keep hard policies; show anomaly score as secondary |
-| LLM credentials fail | Use deterministic incident template |
-| Live demo unstable | Play backup video and show live dashboard/API |
+| Warehouse too heavy            | Blank floor plus shelves/cubes and one robot           |
+| Robot navigation fails         | Script transform/waypoint movement                     |
+| Network connection fails       | Run backend on GPU workstation                         |
+| IsolationForest misbehaves     | Keep hard policies; show anomaly score as secondary    |
+| LLM credentials fail           | Use deterministic incident template                    |
+| Live demo unstable             | Play backup video and show live dashboard/API          |
 
 ## 19. Evidence to Save
 
