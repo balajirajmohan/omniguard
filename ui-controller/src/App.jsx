@@ -1,176 +1,164 @@
-import {useCallback, useMemo, useState} from "react";
-import {PlugZap, Radar, ShieldAlert} from "lucide-react";
-import ControlPanel from "./components/ControlPanel.jsx";
-import DecisionCard from "./components/DecisionCard.jsx";
-import InvestigatePanel from "./components/InvestigatePanel.jsx";
-import ScenarioPanel from "./components/ScenarioPanel.jsx";
-import SettingsSheet from "./components/SettingsSheet.jsx";
-import TelemetryRail from "./components/TelemetryRail.jsx";
-import TopBar from "./components/TopBar.jsx";
-import WarehouseMap from "./components/WarehouseMap.jsx";
-import {
-  DEMO_CREDENTIAL,
-  DEMO_OPERATOR_TOKEN,
-  loadConfig,
-  saveConfig,
-} from "./lib/omniguard.js";
-import {useController} from "./lib/useController.js";
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Keyboard, PlugZap, Radar, ShieldAlert } from 'lucide-react';
+import DecisionCard from './components/DecisionCard.jsx';
+import DualSense from './components/DualSense.jsx';
+import InvestigatePanel from './components/InvestigatePanel.jsx';
+import LogsView from './components/LogsView.jsx';
+import PlaneCard from './components/PlaneCard.jsx';
+import ScenarioPanel from './components/ScenarioPanel.jsx';
+import SettingsSheet from './components/SettingsSheet.jsx';
+import TopBar from './components/TopBar.jsx';
+import WarehouseMap from './components/WarehouseMap.jsx';
+import { loadConfig, saveConfig } from './lib/omniguard.js';
+import { useController } from './lib/useController.js';
+import { useKeyboardControl } from './lib/useKeyboardControl.js';
+import { useSessionLog } from './lib/useSessionLog.js';
 
 export default function App() {
   const [cfg, setCfg] = useState(loadConfig);
   const [showSettings, setShowSettings] = useState(false);
+  const [view, setView] = useState('console');
   const [scenarioResult, setScenarioResult] = useState(null);
-  const ctl = useController(cfg);
 
-  /* A scenario run returns its own event synchronously; the poll catches up a
-   * beat later. Prefer whichever is newer so the card never flickers backwards. */
+  const ctl = useController(cfg);
+  const logs = useSessionLog();
+
+  /* Window-level, so nothing has to be clicked before the keys work:
+   * WASD drives the operator, arrow keys drive the hacker. */
+  const keys = useKeyboardControl(ctl.setStick);
+
+  useEffect(() => { logs.record(ctl.events); }, [ctl.events, logs]);
+
+  const onSave = useCallback((next) => {
+    setCfg(next); saveConfig(next); setShowSettings(false);
+  }, []);
+
+  /* Archive before the backend wipes its state, or the run just demonstrated
+   * would vanish along with it. */
+  const handleReset = useCallback(async () => {
+    logs.archive({ label: 'reset' });
+    setScenarioResult(null);
+    await ctl.reset();
+  }, [ctl, logs]);
+
   const latestEvent = useMemo(() => {
     const polled = ctl.events[0];
     if (!scenarioResult) return polled;
     if (!polled) return scenarioResult;
-    return new Date(polled.timestamp) >= new Date(scenarioResult.timestamp)
-      ? polled
-      : scenarioResult;
+    return new Date(polled.timestamp) >= new Date(scenarioResult.timestamp) ? polled : scenarioResult;
   }, [ctl.events, scenarioResult]);
 
-  const onSave = useCallback((next) => {
-    /* Secrets stay in React memory only — never rely on settings draft/localStorage. */
-    const secured = {
-      ...next,
-      credential: DEMO_CREDENTIAL,
-      operatorToken: DEMO_OPERATOR_TOKEN,
-    };
-    setCfg(secured);
-    saveConfig(secured);
-    setShowSettings(false);
-  }, []);
-
-  const stickHandler = (id) => (next) => ctl.setStick(id, next);
-  const revoked = ctl.status.credential_status === "REVOKED";
+  const lamps = { legit: ctl.view.legit.lamp, rogue: ctl.view.rogue.lamp };
+  const leases = {
+    legit: Boolean(ctl.view.legit.lease?.controlId),
+    rogue: Boolean(ctl.view.rogue.lease?.controlId),
+  };
+  const revoked = ctl.status.credential_status === 'REVOKED';
 
   return (
-    <div className="mx-auto min-h-screen max-w-[1560px] px-4 py-4 sm:px-5">
+    <div className="mx-auto flex min-h-dvh max-w-[1680px] flex-col gap-3 p-3 xl:h-dvh xl:overflow-hidden">
       <TopBar
-        status={ctl.status}
-        pad={ctl.padLabel}
-        resetting={ctl.resetting}
-        settingsOpen={showSettings}
-        health={ctl.health}
-        gatewayReady={ctl.gatewayReady}
-        onReset={() => {
-          setScenarioResult(null);
-          ctl.reset();
-        }}
+        status={ctl.status} health={ctl.health} gatewayReady={ctl.gatewayReady}
+        view={view} onView={setView} pad={ctl.padLabel} resetting={ctl.resetting}
+        settingsOpen={showSettings} onReset={handleReset}
         onToggleSettings={() => setShowSettings((v) => !v)}
       />
 
       {showSettings && (
-        <SettingsSheet
-          cfg={cfg}
-          onSave={onSave}
-          onClose={() => setShowSettings(false)}
-        />
+        <SettingsSheet cfg={cfg} onSave={onSave} onClose={() => setShowSettings(false)} />
       )}
 
-      {ctl.gatewayReady === false && (
-        <div
-          role="status"
-          className="a-rise mb-3 flex items-start gap-3 rounded-2xl border border-warn/50 bg-warn/10 px-4 py-3">
-          <PlugZap
-            size={17}
-            className="mt-0.5 shrink-0 text-warn"
-            aria-hidden="true"
-          />
-          <p className="text-[13px] leading-relaxed text-dim">
-            <b className="text-warn">Teleop gateway not deployed.</b>{" "}
-            <span className="font-mono text-[12px]">/api/teleop/config</span> is
-            not answering on{" "}
-            <span className="font-mono text-[12px]">{cfg.api}</span>, so the
-            joysticks have nothing to authorize against. Scenarios, telemetry
-            and investigation still work. Zone geometry below is the contract
-            default, not server-authoritative.
+      {ctl.gatewayReady === false && view === 'console' && (
+        <div role="status" className="a-rise flex shrink-0 items-start gap-2.5 rounded-xl
+                                      border border-warn/45 bg-warn/10 px-3 py-2">
+          <PlugZap size={14} className="mt-px shrink-0 text-warn" aria-hidden="true" />
+          <p className="text-[11.5px] leading-relaxed text-dim">
+            <b className="text-warn">Teleop gateway not deployed.</b>{' '}
+            <span className="font-mono">/api/teleop/config</span> is not answering on{' '}
+            <span className="font-mono">{cfg.api}</span>. Scenarios, telemetry and investigation
+            still work; zone geometry below is the contract default.
           </p>
         </div>
       )}
 
       {revoked && (
-        <div
-          role="alert"
-          className="a-rise mb-3 flex items-start gap-3 rounded-2xl border border-bad/50 bg-bad/10 px-4 py-3">
-          <ShieldAlert
-            size={17}
-            className="mt-0.5 shrink-0 text-bad"
-            aria-hidden="true"
-          />
-          <p className="text-[13px] leading-relaxed text-dim">
-            <b className="text-bad">Credential revoked.</b> The rogue controller
-            burned the shared fleet credential, so the legitimate operator is
-            locked out too. That is the blast radius of a shared credential —
-            press <b className="text-txt">Reset demo</b> to rotate it.
+        <div role="alert" className="a-rise flex shrink-0 items-start gap-2.5 rounded-xl
+                                     border border-bad/45 bg-bad/10 px-3 py-2">
+          <ShieldAlert size={14} className="mt-px shrink-0 text-bad" aria-hidden="true" />
+          <p className="text-[11.5px] leading-relaxed text-dim">
+            <b className="text-bad">Credential revoked.</b>{' '}
+            The hacker burned the shared fleet credential, so the valid operator is locked out too —
+            the blast radius of a shared credential. Press <b className="text-txt">Reset demo</b> to
+            rotate it.
           </p>
         </div>
       )}
 
-      {/* Map is the hero; telemetry sits beside it rather than under the fold. */}
-      <section className="mb-3 grid gap-3 xl:grid-cols-[minmax(0,2.4fr)_minmax(260px,1fr)]">
-        <div className="card p-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="flex items-center gap-2 text-[15px]">
-              <Radar size={15} className="text-info" aria-hidden="true" />
-              Warehouse floor
-            </h2>
-            <span className="font-mono text-[11px] text-faint">
-              {ctl.world.setpoints.length > 0
-                ? "tracking setpoint"
-                : "holding position"}
-              {ctl.status.bridge?.speed != null &&
-                ` · ${ctl.status.bridge.speed} m/s`}
-            </span>
-          </div>
-          <WarehouseMap
-            zones={ctl.teleopConfig.zones}
-            robot={ctl.world.robot}
-            target={ctl.world.target}
-            trail={ctl.world.trail}
-            setpoints={ctl.world.setpoints}
-          />
-        </div>
+      {view === 'logs' ? (
+        <LogsView sessions={logs.sessions} current={logs.current}
+          onRemove={logs.removeSession} onClearAll={logs.clearAll} />
+      ) : (
+        <>
+          {/* Hero: map and controller side by side, both above the fold. */}
+          <section className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[minmax(0,1.5fr)_minmax(380px,1fr)]">
+            <div className="card flex min-h-0 flex-col p-3.5">
+              <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2">
+                <h2 className="flex items-center gap-1.5 text-[13.5px]">
+                  <Radar size={13} className="text-info" aria-hidden="true" />Warehouse floor
+                </h2>
+                <div className="flex items-center gap-1.5">
+                  <span className="chip">{ctl.status.robot_status ?? '—'}</span>
+                  <span className="chip">{ctl.status.robot_zone ?? '—'}</span>
+                  <span className="chip">
+                    {ctl.world.robot
+                      ? `${ctl.world.robot.x.toFixed(1)}, ${ctl.world.robot.y.toFixed(1)}`
+                      : 'no pose'}
+                  </span>
+                </div>
+              </div>
+              <div className="min-h-0 flex-1">
+                <WarehouseMap zones={ctl.teleopConfig.zones} robot={ctl.world.robot}
+                  target={ctl.world.target} trail={ctl.world.trail} setpoints={ctl.world.setpoints} />
+              </div>
+            </div>
 
-        <TelemetryRail status={ctl.status} robot={ctl.world.robot} />
-      </section>
+            <div className="flex min-h-0 flex-col gap-3">
+              <div className="card flex min-h-0 flex-col p-3.5">
+                <div className="mb-1 flex shrink-0 items-center justify-between gap-2">
+                  <h2 className="text-[13.5px]">Control surface</h2>
+                  <span className="chip">
+                    <Keyboard size={9} aria-hidden="true" />
+                    <span className={keys.legit ? 'text-ok' : ''}>WASD</span>
+                    <span className="text-faint">/</span>
+                    <span className={keys.rogue ? 'text-bad' : ''}>arrows</span>
+                    <span className="text-faint">· d-pad arm · L1/R1 grip</span>
+                  </span>
+                </div>
+                <div className="min-h-0 flex-1">
+                  <DualSense
+                    stickRef={ctl.stickRef} onStick={ctl.setStick} lamps={lamps} leases={leases}
+                    onArmPreset={ctl.sendArmPreset} onGripper={ctl.sendGripper}
+                    onEmergencyStop={ctl.emergencyStop}
+                  />
+                </div>
+              </div>
 
-      <section className="mb-3 grid gap-3 xl:grid-cols-3">
-        <ScenarioPanel cfg={cfg} onResult={setScenarioResult} />
-        <DecisionCard event={latestEvent} timeline={ctl.timeline} />
-        <InvestigatePanel cfg={cfg} />
-      </section>
+              <div className="grid shrink-0 gap-2 sm:grid-cols-2">
+                <PlaneCard panel="legit" state={ctl.view.legit} />
+                <PlaneCard panel="rogue" state={ctl.view.rogue} />
+              </div>
+            </div>
+          </section>
 
-      <main className="a-stagger grid gap-3 lg:grid-cols-2">
-        {["legit", "rogue"].map((id) => (
-          <ControlPanel
-            key={id}
-            panel={id}
-            state={ctl.view[id]}
-            onStick={stickHandler(id)}
-            padRef={ctl.padRef}
-            options={ctl.options}
-            setOptions={ctl.setOptions}
-            onArmPreset={ctl.sendArmPreset}
-            onGripper={ctl.sendGripper}
-          />
-        ))}
-      </main>
-
-      <footer className="mt-3 flex flex-wrap justify-between gap-3 text-[11px] text-faint">
-        <span>
-          Left stick drives the operator · right stick the attacker · Circle is
-          an emergency stop · pointer, arrows and WASD also work
-        </span>
-        <span>
-          Browser → OmniGuard {cfg.api} → secured bridge → Isaac. The browser
-          never contacts the bridge and never holds its token.
-        </span>
-      </footer>
+          {/* Secondary rail, still on screen without scrolling on a laptop. */}
+          <section className="a-stagger grid shrink-0 gap-3 xl:h-[228px]
+                              xl:grid-cols-[260px_minmax(0,1fr)_280px]">
+            <ScenarioPanel cfg={cfg} onResult={setScenarioResult} />
+            <DecisionCard event={latestEvent} timeline={ctl.timeline} />
+            <InvestigatePanel cfg={cfg} />
+          </section>
+        </>
+      )}
     </div>
   );
 }

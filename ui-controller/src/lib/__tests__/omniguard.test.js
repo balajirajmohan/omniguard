@@ -381,3 +381,107 @@ describe("gamepad mapping", () => {
     expect(OG.padEstopPressed(undefined)).toBe(false);
   });
 });
+
+describe('keyboard control (no click-to-focus)', () => {
+  it('splits WASD to the operator and arrows to the hacker', async () => {
+    const { vectorFor } = await import('../useKeyboardControl.js');
+    expect(vectorFor(new Set(['w']), 'legit')).toEqual({ vec: { x: 0, y: 1 }, mag: 1 });
+    expect(vectorFor(new Set(['ArrowUp']), 'rogue')).toEqual({ vec: { x: 0, y: 1 }, mag: 1 });
+    // Each plane ignores the other plane's keys, so both can be driven at once.
+    expect(vectorFor(new Set(['ArrowUp']), 'legit').mag).toBe(0);
+    expect(vectorFor(new Set(['w']), 'rogue').mag).toBe(0);
+  });
+
+  it('normalises diagonals so they are not faster than cardinals', async () => {
+    const { vectorFor } = await import('../useKeyboardControl.js');
+    const d = vectorFor(new Set(['w', 'd']), 'legit');
+    expect(Math.hypot(d.vec.x, d.vec.y)).toBeCloseTo(1);
+    expect(d.vec.x).toBeCloseTo(Math.SQRT1_2);
+    expect(d.vec.y).toBeCloseTo(Math.SQRT1_2);
+  });
+
+  it('cancels opposing keys and reports released', async () => {
+    const { vectorFor } = await import('../useKeyboardControl.js');
+    expect(vectorFor(new Set(['w', 's']), 'legit')).toEqual({ vec: { x: 0, y: 0 }, mag: 0 });
+    expect(vectorFor(new Set(), 'legit').mag).toBe(0);
+  });
+});
+
+describe('session log export', () => {
+  it('emits a header and one row per decision', async () => {
+    const { toCsv } = await import('../useSessionLog.js');
+    const rows = toCsv([
+      { timestamp: '2026-08-22T10:00:00Z', final_decision: 'BLOCK', reasons: ['UNKNOWN_DEVICE'] },
+      { timestamp: '2026-08-22T10:00:05Z', final_decision: 'ALLOW', reasons: [] },
+    ]).split('\n');
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toContain('"final_decision"');
+    expect(rows[1]).toContain('"BLOCK"');
+    expect(rows[2]).toContain('"ALLOW"');
+  });
+
+  it('escapes quotes and commas in free-text reasons', async () => {
+    const { toCsv } = await import('../useSessionLog.js');
+    const csv = toCsv([{ final_decision: 'BLOCK', reasons: ['said "no", firmly'] }]);
+    expect(csv).toContain('"said ""no"", firmly"');
+    // The embedded comma must not create an extra column.
+    expect(csv.split('\n')[1].split('","')).toHaveLength(12);
+  });
+
+  it('tolerates missing fields rather than writing undefined', async () => {
+    const { toCsv } = await import('../useSessionLog.js');
+    expect(toCsv([{}]).split('\n')[1]).not.toContain('undefined');
+  });
+});
+
+describe('controller aux buttons (arm + gripper)', () => {
+  /* These names are validated server-side in backend/teleop.py; anything else
+   * comes back INVALID_ARM_PRESET / INVALID_GRIPPER_ACTION. */
+  const BACKEND_PRESETS = ['stow', 'carry', 'reach', 'inspect'];
+  const BACKEND_ACTIONS = ['open', 'close'];
+
+  const fireAll = async () => {
+    const { AUX_BUTTONS } = await import('../useController.js');
+    const calls = [];
+    const aux = {
+      armPreset: (p) => calls.push(['arm', p]),
+      gripper: (a) => calls.push(['grip', a]),
+    };
+    const byIndex = {};
+    for (const [index, fire] of AUX_BUTTONS) {
+      calls.length = 0;
+      fire(aux);
+      byIndex[index] = calls[0];
+    }
+    return byIndex;
+  };
+
+  it('maps the d-pad to the four arm presets', async () => {
+    const b = await fireAll();
+    expect(b[12]).toEqual(['arm', 'reach']);
+    expect(b[13]).toEqual(['arm', 'stow']);
+    expect(b[14]).toEqual(['arm', 'carry']);
+    expect(b[15]).toEqual(['arm', 'inspect']);
+  });
+
+  it('maps L1 and R1 to gripper open and close', async () => {
+    const b = await fireAll();
+    expect(b[4]).toEqual(['grip', 'open']);
+    expect(b[5]).toEqual(['grip', 'close']);
+  });
+
+  it('sends only names the backend accepts', async () => {
+    const b = await fireAll();
+    const sent = Object.values(b);
+    const presets = sent.filter(([k]) => k === 'arm').map(([, v]) => v);
+    const actions = sent.filter(([k]) => k === 'grip').map(([, v]) => v);
+    expect(presets.sort()).toEqual([...BACKEND_PRESETS].sort());
+    expect(actions.sort()).toEqual([...BACKEND_ACTIONS].sort());
+  });
+
+  it('does not collide with the emergency-stop button', async () => {
+    const { AUX_BUTTONS } = await import('../useController.js');
+    const { PAD_ESTOP_BUTTON } = await import('../omniguard.js');
+    expect(AUX_BUTTONS.map(([i]) => i)).not.toContain(PAD_ESTOP_BUTTON);
+  });
+});

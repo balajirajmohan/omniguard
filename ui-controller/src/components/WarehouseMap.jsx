@@ -15,7 +15,8 @@ export default function WarehouseMap({ zones, robot, target, trail, setpoints })
       aria-label={robot
         ? `Warehouse floor. Robot at ${robot.x.toFixed(1)}, ${robot.y.toFixed(1)} metres.`
         : 'Warehouse floor. Robot position not yet reported by the backend.'}
-      className="block h-auto w-full rounded-xl border border-line bg-sunken">
+      preserveAspectRatio="xMidYMid meet"
+      className="block h-full max-h-full w-full rounded-xl border border-line bg-sunken">
       <defs>
         <pattern id="grid" width={2 * SCALE} height={2 * SCALE} patternUnits="userSpaceOnUse">
           <path d={`M ${2 * SCALE} 0 L 0 0 0 ${2 * SCALE}`} fill="none"

@@ -1,128 +1,126 @@
 @import "tailwindcss";
 @import "@fontsource-variable/inter";
 
-/* Palette: "Vault dark blue + secure green" from the design system, with one
- * verified correction. Its raw #059669 / #DC2626 measure 4.26:1 and 3.32:1 on
- * the card surface — both below the 4.5:1 body-text floor. They are kept for
- * fills, borders and glows; text uses the lighter tints, which measure
- * 8.35:1 and 5.80:1. Same hue, legible. */
+/* Palette verified for contrast on the card surface: the saturated -600 tints
+ * measure below 4.5:1 as body text, so they are used for fills, borders and
+ * glows only, while text uses the lighter tints (8.4:1 and 5.8:1). */
 @theme {
-  --color-bg:        #0F172A;
-  --color-surface:   #192134;
-  --color-elevated:  #1E2839;
-  --color-sunken:    #10192E;
-  --color-line:      rgba(255,255,255,.08);
-  --color-line-hi:   rgba(255,255,255,.16);
+  --color-void:      #05070d;
+  --color-bg:        #0a0e17;
+  --color-surface:   #121826;
+  --color-elevated:  #18202f;
+  --color-sunken:    #0c111c;
+  --color-line:      rgba(255,255,255,.07);
+  --color-line-hi:   rgba(255,255,255,.15);
 
-  --color-txt:       #FFFFFF;
-  --color-dim:       #CBD5E1;  /* 10.8:1 on card */
-  --color-faint:     #94A3B8;  /*  6.3:1 on card — the floor, never go dimmer */
+  --color-txt:       #f2f6fd;
+  --color-dim:       #c3cdde;
+  --color-faint:     #8d9ab1;
 
-  --color-ok:        #34D399;
+  --color-ok:        #34d399;
   --color-ok-solid:  #059669;
-  --color-bad:       #F87171;
-  --color-bad-solid: #DC2626;
-  --color-warn:      #FBBF24;
-  --color-info:      #60A5FA;
-  --color-primary:   #1E3A5F;
+  --color-bad:       #fb7185;
+  --color-bad-solid: #e11d48;
+  --color-warn:      #fbbf24;
+  --color-info:      #60a5fa;
+  --color-violet:    #a78bfa;
 
   --font-sans: "Inter Variable", Inter, ui-sans-serif, system-ui, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-
-  /* Density 8/10 — dashboard scale */
-  --spacing-gap: 0.75rem;
-
   --ease-back: cubic-bezier(.34, 1.56, .64, 1);
 }
 
 @layer base {
   html { color-scheme: dark; }
   body {
-    @apply bg-bg text-txt antialiased;
+    @apply bg-void text-txt antialiased;
     font-family: var(--font-sans);
     background-image:
-      radial-gradient(1000px 560px at 10% -14%, rgba(30,58,95,.55), transparent 60%),
-      radial-gradient(820px 480px at 94% -6%, rgba(5,150,105,.14), transparent 58%);
+      radial-gradient(1200px 640px at 8% -14%, rgba(37,99,235,.20), transparent 62%),
+      radial-gradient(900px 520px at 96% -6%, rgba(167,139,250,.14), transparent 58%),
+      radial-gradient(700px 480px at 50% 110%, rgba(5,150,105,.10), transparent 60%);
     background-attachment: fixed;
   }
   h1, h2, h3 { @apply font-semibold tracking-tight; }
-
-  /* Every interactive control keeps a visible focus ring. */
-  :where(a, button, input, [tabindex]):focus-visible {
-    @apply outline-none ring-2 ring-info ring-offset-2 ring-offset-bg rounded-lg;
+  :where(a, button, input, select, [tabindex]):focus-visible {
+    @apply outline-none ring-2 ring-info/80 ring-offset-2 ring-offset-void rounded-lg;
   }
-  ::-webkit-scrollbar { width: 7px; height: 7px; }
-  ::-webkit-scrollbar-thumb { background: #2b3852; border-radius: 99px; }
-  ::-webkit-scrollbar-thumb:hover { background: #3a4a68; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: #26314a; border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: #35446a; }
   ::-webkit-scrollbar-track { background: transparent; }
 }
 
 @layer components {
+  /* Gradient hairline + inner highlight reads as depth without heavy shadows. */
   .card {
-    @apply rounded-2xl border border-line;
-    background: linear-gradient(168deg, color-mix(in srgb, var(--color-surface) 96%, white), var(--color-bg));
-    box-shadow: 0 20px 44px -28px rgba(0,0,0,.92), inset 0 1px 0 rgba(255,255,255,.05);
+    @apply relative rounded-2xl border border-line;
+    background:
+      linear-gradient(168deg, rgba(24,32,47,.94), rgba(10,14,23,.92));
+    box-shadow:
+      0 1px 0 rgba(255,255,255,.045) inset,
+      0 24px 50px -30px rgba(0,0,0,.95);
+  }
+  .card-glow::after {
+    content: ""; position: absolute; inset: -1px; border-radius: inherit;
+    padding: 1px; pointer-events: none;
+    background: linear-gradient(140deg, var(--glow, transparent), transparent 42%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
   }
   .label {
-    @apply block text-[9.5px] font-semibold uppercase tracking-[.14em] text-faint;
+    @apply block text-[9px] font-semibold uppercase tracking-[.16em] text-faint;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-line
+           bg-sunken/80 px-2.5 py-1 font-mono text-[10.5px] text-dim;
   }
   .field {
     @apply w-full rounded-xl border border-line bg-sunken px-3 py-2.5 font-mono
-           text-[12.5px] text-txt outline-none transition-colors duration-200
-           placeholder:text-faint/70 focus:border-info;
+           text-[12.5px] text-txt outline-none transition-colors
+           placeholder:text-faint/60 focus:border-info;
   }
   .btn {
-    @apply inline-flex cursor-pointer items-center gap-2 rounded-xl border border-line
-           bg-elevated px-4 py-2.5 text-sm font-semibold text-dim
-           transition-all duration-200 hover:border-line-hi hover:text-txt
-           active:scale-[.97] disabled:cursor-not-allowed disabled:opacity-55;
+    @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl
+           border border-line bg-elevated px-3.5 py-2 text-[12.5px] font-semibold
+           text-dim transition-all duration-200
+           hover:border-line-hi hover:text-txt active:scale-[.97]
+           disabled:cursor-not-allowed disabled:opacity-50;
   }
+  .btn-sm { @apply px-2.5 py-1.5 text-[11.5px]; }
   .btn-primary {
     @apply border-transparent text-white hover:border-transparent;
-    background: linear-gradient(180deg, #0ea472, var(--color-ok-solid));
-    box-shadow: 0 8px 22px -12px rgba(5,150,105,.9);
+    background: linear-gradient(180deg, #10b981, var(--color-ok-solid));
+    box-shadow: 0 10px 24px -14px rgba(5,150,105,.95);
   }
-  .btn-primary:hover { filter: brightness(1.09); }
-
-  /* Reserves vertical space so async content cannot shove the panel around. */
-  .slot { @apply block; min-height: var(--slot-h, 0px); }
+  .btn-primary:hover { filter: brightness(1.1); }
+  /* Panes scroll internally so the shell itself never scrolls on desktop. */
+  .pane { @apply min-h-0 overflow-y-auto; }
 }
 
-/* ------------------------------------------------------------- motion --- */
-@keyframes og-rise   { from { opacity:0; transform: translateY(8px) scale(.98) } to { opacity:1; transform:none } }
-@keyframes og-pulse  { 0%,100% { opacity:1 } 50% { opacity:.3 } }
-@keyframes og-sweep  { from { transform: translateX(-110%) } to { transform: translateX(320%) } }
-@keyframes og-radar  { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
-@keyframes og-flash  { from { background-color: rgba(96,165,250,.22) } to { background-color: transparent } }
-@keyframes og-ping   { 0% { transform:scale(.7); opacity:.85 } 100% { transform:scale(2.4); opacity:0 } }
+@keyframes og-rise   { from { opacity:0; transform: translateY(6px) } to { opacity:1; transform:none } }
+@keyframes og-pulse  { 0%,100% { opacity:1 } 50% { opacity:.32 } }
+@keyframes og-sweep  { from { transform: translateX(-120%) } to { transform: translateX(340%) } }
+@keyframes og-ping   { 0% { transform:scale(.6); opacity:.9 } 100% { transform:scale(2.6); opacity:0 } }
+@keyframes og-flash  { from { background-color: rgba(96,165,250,.20) } to { background-color: transparent } }
+@keyframes og-breathe{ 0%,100% { opacity:.55 } 50% { opacity:1 } }
 @keyframes og-shimmer{ from { background-position: -180% 0 } to { background-position: 280% 0 } }
 
-.a-rise    { animation: og-rise .42s var(--ease-back) both; }
+.a-rise    { animation: og-rise .34s var(--ease-back) both; }
 .a-pulse   { animation: og-pulse 1s ease-in-out infinite; }
 .a-sweep   { animation: og-sweep 2s linear infinite; }
-.a-radar   { animation: og-radar 4.5s linear infinite; transform-origin: center; }
-.a-flash   { animation: og-flash .55s ease-out; }
 .a-ping    { animation: og-ping 1.5s ease-out infinite; }
+.a-flash   { animation: og-flash .5s ease-out; }
+.a-breathe { animation: og-breathe 2.4s ease-in-out infinite; }
 .a-shimmer {
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.09), transparent);
-  background-size: 180% 100%;
-  animation: og-shimmer 1.5s linear infinite;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.08), transparent);
+  background-size: 180% 100%; animation: og-shimmer 1.4s linear infinite;
 }
-
-/* Stagger for grid entrances — the design system's back.out(1.4) list preset,
- * done with delays instead of pulling in an animation library. */
-.a-stagger > * { animation: og-rise .42s var(--ease-back) both; }
-.a-stagger > *:nth-child(1) { animation-delay: .04s }
-.a-stagger > *:nth-child(2) { animation-delay: .10s }
-.a-stagger > *:nth-child(3) { animation-delay: .16s }
-.a-stagger > *:nth-child(4) { animation-delay: .22s }
-.a-stagger > *:nth-child(5) { animation-delay: .28s }
-.a-stagger > *:nth-child(6) { animation-delay: .34s }
+.a-stagger > * { animation: og-rise .34s var(--ease-back) both; }
+.a-stagger > *:nth-child(1){animation-delay:.03s} .a-stagger > *:nth-child(2){animation-delay:.08s}
+.a-stagger > *:nth-child(3){animation-delay:.13s} .a-stagger > *:nth-child(4){animation-delay:.18s}
 
 @media (prefers-reduced-motion: reduce) {
-  .a-rise, .a-pulse, .a-sweep, .a-radar, .a-flash, .a-ping, .a-shimmer,
-  .a-stagger > * {
-    animation: none !important;
-  }
-  * { transition-duration: 1ms !important; }
+  .a-rise,.a-pulse,.a-sweep,.a-ping,.a-flash,.a-breathe,.a-shimmer,.a-stagger>*{animation:none!important}
+  *{transition-duration:1ms!important}
 }

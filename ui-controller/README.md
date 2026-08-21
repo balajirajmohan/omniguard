@@ -86,11 +86,74 @@ server-authoritative, and keeps scenarios, telemetry and investigation working.
 Joystick authorization then reports `TELEOP_GATEWAY_NOT_DEPLOYED` instead of
 failing silently.
 
-## Input
+## Layout
 
-Pointer drag, arrow keys or WASD while focused, and a real gamepad.
+Two views, switched from the top bar.
 
-### PS5 / DualSense
+**Console** is viewport-locked on desktop (`xl:h-dvh`) so nothing important sits
+below the fold. The hero is the warehouse floor beside the DualSense; the map
+fills whatever height it is given rather than dictating page height, and each
+card scrolls internally instead of growing the page. Scenarios, latest decision
+and the investigator sit in a fixed rail under the hero.
+
+**Logs** keeps every run. A session is archived automatically when **Reset demo**
+is pressed — the backend wipes its state, which used to destroy the evidence of
+the run you had just demonstrated. Sessions persist in `localStorage` (bounded to
+25, best-effort), and the in-flight run is listed as a first-class session so
+nothing is invisible before the first reset.
+
+Exports: **Decisions CSV** and **Session JSON** per session, plus **All** for
+every archived session. CSV quotes every field and doubles embedded quotes, so
+free-text reasons cannot break the column count.
+
+## Control surface
+
+The DualSense is drawn in SVG and is a real control surface, not decoration:
+
+| Input | Operator (left stick) | Hacker (right stick) |
+|---|---|---|
+| Pointer | drag the left stick | drag the right stick |
+| Keyboard | **W A S D** | **arrow keys** |
+| Gamepad | left stick | right stick |
+
+The light bars either side of the touchpad carry each plane's live verdict.
+
+### Arm, gripper and stop are on the buttons
+
+Every button is live on screen *and* on a physical pad (standard mapping):
+
+| Button | Command | Endpoint |
+|---|---|---|
+| D-pad ↑ / ↓ / ← / → | arm `reach` / `stow` / `carry` / `inspect` | `POST /api/teleop/arm/preset` |
+| L1 / R1 | gripper `open` / `close` | `POST /api/teleop/gripper` |
+| Circle | emergency stop — ends every active lease | `POST /api/teleop/stop` |
+
+Preset and action names mirror the sets `backend/teleop.py` validates against;
+anything else returns `INVALID_ARM_PRESET` / `INVALID_GRIPPER_ACTION`. A test
+pins the button map to those sets so a rename cannot silently start failing.
+
+Arm and gripper commands ride the **movement lease**, so they act on whichever
+plane currently holds one — shown under the sticks. With no lease the request
+still goes through the normal path and reports `NO_ACTIVE_TELEOP_LEASE`, which is
+more useful than an inert button. A rejection tears the lease down exactly like a
+rejected movement packet.
+
+Physical buttons fire on the rising edge only, so holding one does not stream
+commands.
+
+### Keyboard needs no focus
+
+The listener is on `window`, not on the stick element, so nothing has to be
+clicked first — that was the old behaviour and it was discoverable only by
+accident. The keys are split across the two planes rather than sharing one
+focused control, so both can be driven at once. Typing in Settings is unaffected
+(`input`, `textarea`, `select` and `contenteditable` are ignored), arrows are
+prevented from scrolling the page, and a held key is released on blur so it
+cannot latch a direction.
+
+Diagonals are normalised, so `W`+`D` is not faster than `W`.
+
+## Gamepad
 
 Works over USB or Bluetooth. A DualSense reports `mapping: "standard"`, so:
 
