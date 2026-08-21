@@ -1,295 +1,497 @@
-# OmniGuard Hackathon Runbook
+# OmniGuard 22-Hour Hackathon Runbook
 
-End-to-end steps from zero to judging demo. Keep this open during the event.
+## 1. Freeze the MVP
 
-Related docs:
-- [Isaac day-zero checklist](isaac-setup.md)
-- [Terraform AWS workstation](../infra/terraform/README.md)
-- [Broker ↔ Isaac integration](integration.md)
-- [3-minute demo script](demo-script.md)
+Build exactly this:
 
----
+1. A small warehouse scene in NVIDIA Isaac Sim.
+2. One mobile robot called `robot-01`.
+3. A normal fleet agent sends a permitted movement command.
+4. An attacker reuses a valid credential and sends an abnormal command toward `RESTRICTED_ZONE` at excessive speed.
+5. OmniGuard evaluates identity, policy and anomaly risk.
+6. OmniGuard blocks the command, stops the simulated robot, revokes the credential and records an incident.
+7. Claude or OpenAI explains the incident on a dashboard.
 
-## Roles (assign before hour 0)
+Do not build multiple robots, Kubernetes, ROS, Kafka, a custom warehouse, robot training, facial recognition or a locally hosted LLM.
 
-| Role | Owns |
-|------|------|
-| Simulation | AWS Terraform, Isaac Sim, robot move, e-stop |
-| Security | FastAPI broker, JWT policy, clients |
-| UI / pitch | Streamlit dashboard, slides, talk track |
-| Integration | Wire adapter, demo reset, rehearsal |
+## 2. Definition of Done
 
----
+The project is complete when these four buttons work:
 
-## Phase 0 — Prerequisites (before the 22-hour clock)
+- `Reset Demo`
+- `Normal Operation`
+- `Attack - Protection OFF`
+- `Attack - OmniGuard ON`
 
-### 0.1 Accounts and tools
+Expected results:
 
-- [ ] AWS account + ~USD 200 credits / budget alarms
-- [ ] EC2 GPU quota for `g6e.4xlarge` in `ap-south-1`
-- [ ] Terraform `>= 1.5` and AWS CLI v2 on the laptop that will apply infra
-- [ ] AWS credentials configured (`aws configure` or env vars)
-- [ ] NICE DCV Client installed on Mac: https://www.nice-dcv.com/
-- [ ] NVIDIA Developer Program membership (required for Isaac Sim license)
-- [ ] GitHub access to this repo for the whole team
+| Button | Expected result |
+|---|---|
+| Normal Operation | Robot moves safely; command is allowed |
+| Attack - Protection OFF | Dangerous command reaches the simulated robot |
+| Attack - OmniGuard ON | Command is blocked; robot stops; credential is revoked |
+| Reset Demo | Robot and credential return to their initial states |
 
-### 0.2 Subscribe to the Marketplace AMI (required once)
+## 3. Assign Owners Now
 
-Terraform cannot skip Marketplace terms.
+For a three-person team:
 
-1. Open [NVIDIA Isaac Sim Development Workstation (Linux)](https://aws.amazon.com/marketplace/pp/prodview-bl35herdyozhw).
-2. **View purchase options** → **Accept Terms** (software is $0; you pay EC2 only).
-3. Wait until subscription shows as active.
-4. Optional: discover the AMI ID for your region:
+| Owner | Responsibility | First checkpoint |
+|---|---|---|
+| Simulator owner | GPU access and Isaac Sim | Robot moves and stops using Python |
+| Security owner | FastAPI, policy and anomaly model | Normal request allowed; attack blocked |
+| Experience owner | Streamlit, LLM, story and slides | Dashboard shows normal and attack events |
 
-```bash
-bash scripts/discover_isaac_ami.sh ap-south-1
-```
+For a two-person team, combine Security and Experience. Only one person should work inside the Isaac Sim graphical session.
 
-### 0.3 Deploy the GPU workstation with Terraform
+## 4. Create One Shared Repository
 
-```bash
-cd infra/terraform
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars:
-#   allowed_cidr_blocks = ["YOUR.PUBLIC.IP/32"]
-#   key_name            = "omniguard-isaac"   # existing key, OR
-#   create_key_pair     = true + public_key_path
-#   ami_id              = "ami-..."           # if auto-discover fails
+Use one existing GitHub/GitLab repository if available. Create a clean branch for the event.
 
-terraform init
-terraform plan
-terraform apply
-```
-
-Save outputs:
-
-```bash
-terraform output
-# public_ip, dcv_url, ssh_command, instance_id
-```
-
-### 0.4 First login (Checkpoint A start)
-
-Per [NVIDIA AWS deployment docs](https://docs.isaacsim.omniverse.nvidia.com/latest/installation/install_advanced_cloud_setup_aws.html):
-
-```bash
-# SSH (from terraform output)
-ssh -i <your.pem> ubuntu@<public_ip>
-
-# Set DCV password (required every new instance)
-sudo passwd ubuntu
-sudo dcv list-sessions   # expect a console session
-```
-
-On your Mac, open DCV Client → `https://<public_ip>:8443` → user `ubuntu` → password you set.
-
-### 0.5 Launch Isaac Sim on the instance
-
-In a terminal **inside DCV**:
-
-```bash
-sudo chown -R ubuntu:root /opt/IsaacSim
-cd ~/IsaacSim   # or /opt/IsaacSim per AMI layout
-./post_install.sh
-./warmup.sh     # may take 15+ minutes — do this before the clock
-./isaac-sim.sh
-```
-
-Then:
-
-1. Load a bundled warehouse USD (`warehouse.usd` / small warehouse digital twin).
-2. Add **Nova Carter** (do not build a custom robot).
-3. Mark `ZONE_A`, `ZONE_B`, `HUMAN_ZONE`.
-4. Run one Python move: Zone A → Zone B.
-5. Download assets locally on the instance.
-
-### 0.6 Checkpoint A gate
-
-- [ ] Isaac Sim launches
-- [ ] Warehouse visible
-- [ ] Robot moves A → B
-- [ ] DCV usable from team Macs (CIDRs allowlisted)
-
-**Do not start the 22-hour clock until Checkpoint A is green.**
-
-### 0.7 Mac security track (Checkpoint B) — can run in parallel
-
-On any laptop:
-
-```bash
-cd omniguard
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-uvicorn broker.main:app --reload --port 8000
-# other terminals:
-python clients/normal_client.py
-python clients/attack_client.py --reuse
-streamlit run dashboard/app.py
-```
-
-Checkpoint B:
-
-- [ ] Normal → `ALLOW`
-- [ ] Attack → `DENY` + `contained: true`
-- [ ] Reuse → `DENY` (`token_revoked`)
-
----
-
-## Phase 1 — Hours 0–3: Stabilize simulation
-
-**Owner: Simulation**
-
-1. Confirm instance still running (`aws ec2 describe-instances` or Terraform state).
-2. Re-open DCV; re-launch Isaac if needed.
-3. Rehearse A→B move until it is reliable under 60 seconds.
-4. Document the exact scene path and robot prim path in a shared note.
-5. Soft-stop the instance only if the team is idle (`terraform apply -var='instance_state=stopped'` if configured, or AWS Console Stop — keep EBS).
-
----
-
-## Phase 2 — Hours 3–7: Harden the broker
-
-**Owner: Security**
-
-1. Clone/pull latest OmniGuard on all laptops.
-2. Rehearse Checkpoint B until muscle memory.
-3. Confirm policy reasons show: `device_mismatch`, `human_zone_breach` / `zone_forbidden`.
-4. Practice `POST /demo/reset` between runs.
-5. Optional: run broker on the GPU box too (same repo) so Isaac adapter is local.
-
-```bash
-curl -X POST http://127.0.0.1:8000/demo/reset
-bash scripts/run_checkpoint_b.sh
-```
-
----
-
-## Phase 3 — Hours 7–12: Wire broker → Isaac
-
-**Owner: Integration + Simulation**
-
-1. Implement `_send_to_isaac` / `_send_estop_to_isaac` in `broker/isaac_adapter.py` (see [integration.md](integration.md)).
-2. Start broker on the workstation:
-
-```bash
-export OMNIGUARD_ISAAC_ENABLED=1
-uvicorn broker.main:app --host 0.0.0.0 --port 8000
-```
-
-3. From a laptop (or localhost on the GPU box):
-
-```bash
-python clients/normal_client.py --base-url http://<gpu-ip>:8000
-# Security group must allow TCP 8000 from team CIDRs if remote
-```
-
-4. Prove:
-
-- [ ] `ALLOW` moves the real Isaac robot
-- [ ] `DENY` never moves it
-- [ ] Containment triggers e-stop / zero velocity
-
-If remote broker access is needed, add port 8000 in Terraform `extra_tcp_ports` and re-apply (keep source = team `/32` only).
-
----
-
-## Phase 4 — Hours 12–16: Detection moment
-
-**Owners: Simulation + UI**
-
-1. Place a human / restricted zone marker in the twin (`HUMAN_ZONE`).
-2. Optional before/after: once bypass adapter to show near-miss; then same attack through OmniGuard.
-3. Dashboard shows red incident card with identity, zone, device, revoke.
-4. Capture one screenshot of DENY + contained robot.
-
----
-
-## Phase 5 — Hours 16–19: Polish
-
-**Owner: UI / pitch**
-
-1. Follow [demo-script.md](demo-script.md) word-for-word.
-2. Streamlit open on projector laptop; Isaac DCV on second screen.
-3. Write one-slide architecture + value line:
-
-> NVIDIA tests whether robots work. OmniGuard tests compromised identities controlling those robots.
-
-4. Record a **backup video** of the full flow.
-
----
-
-## Phase 6 — Hours 19–22: Rehearse and protect
-
-1. Run the exact demo **five times** from a clean reset.
-2. Freeze code; no new features.
-3. Prepare failover: if Isaac dies, run Checkpoint B only + backup video.
-4. Cost: stop GPU instance when not rehearsing.
-
-```bash
-# After the event
-cd infra/terraform
-terraform destroy   # or stop instance and delete later
-```
-
----
-
-## Day-of demo checklist (print this)
+Suggested layout:
 
 ```text
-[ ] GPU instance RUNNING
-[ ] DCV connected; Isaac scene loaded; robot at ZONE_A
-[ ] Broker up (OMNIGUARD_ISAAC_ENABLED=1 if wired)
-[ ] Dashboard open; POST /demo/reset done
-[ ] normal_client → ALLOW (robot moves)
-[ ] attack_client --reuse → DENY + revoke + e-stop
-[ ] Pitch close sentence ready
-[ ] Backup video on USB/local disk
+omniguard/
+├── backend/
+│   ├── main.py
+│   ├── policy.py
+│   ├── anomaly.py
+│   └── incident_ai.py
+├── dashboard/
+│   └── app.py
+├── simulator/
+│   ├── fake_robot.py
+│   └── isaac_bridge.py
+├── data/
+├── tests/
+├── requirements.txt
+├── .env.example
+└── README.md
 ```
 
----
+Every owner works on a separate branch and commits after every successful checkpoint. Do not attempt a complicated repository-history repair during the event; use a new clean repository if necessary.
 
-## Cost and safety rules
+## 5. Start the Backend on a Laptop Immediately
 
-- Prefer **Mumbai** (`ap-south-1`) for latency from India.
-- Use **On-Demand** `g6e.4xlarge` (1× L40S, 128 GiB RAM).
-- Restrict SG to team `IP/32` — never `0.0.0.0/0` on DCV/WebRTC if avoidable.
-- Stop instance when idle; destroy after hackathon.
-- Budget alarms: set in AWS Budgets (~USD 100 and USD 180).
-
----
-
-## Failure modes
-
-| Problem | Action |
-|---------|--------|
-| Marketplace AMI not found | Accept terms; set `ami_id` from `discover_isaac_ami.sh` |
-| GPU quota | Request limit increase early; fallback `g6e.2xlarge` |
-| DCV login fails | Re-SSH, `sudo passwd ubuntu`, check port 8443 |
-| Isaac warmup forever | Start warmup before clock; keep instance warm |
-| Adapter not ready | Demo Checkpoint B + video; still pitch value |
-| Port 8000 unreachable | Run clients on GPU box over DCV terminal |
-
----
-
-## Quick command cheat sheet
+Do this even if GPU access has not arrived.
 
 ```bash
-# Terraform
-cd infra/terraform && terraform apply
-terraform output dcv_url
-
-# Broker (Mac)
-uvicorn broker.main:app --reload --port 8000
-streamlit run dashboard/app.py
-
-# Demo
-python clients/normal_client.py
-python clients/attack_client.py --reuse
-curl -X POST http://127.0.0.1:8000/demo/reset
-
-# Isaac (on GPU box via DCV)
-cd ~/IsaacSim && ./isaac-sim.sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install fastapi uvicorn streamlit requests pydantic pyjwt scikit-learn pandas numpy joblib plotly boto3 python-dotenv
 ```
+
+Start with an in-memory state object:
+
+```python
+STATE = {
+    "protection_enabled": True,
+    "credential_status": "ACTIVE",
+    "robot_status": "STOPPED",
+    "robot_zone": "SAFE_ZONE",
+    "events": [],
+}
+```
+
+Create these API endpoints:
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/health` | Confirms backend is alive |
+| `POST` | `/api/reset` | Resets robot, credential and events |
+| `POST` | `/api/commands` | Evaluates and queues a movement command |
+| `GET` | `/api/robots/robot-01/next-command` | Simulator fetches the next allowed command |
+| `POST` | `/api/robots/robot-01/telemetry` | Simulator reports position/status |
+| `GET` | `/api/state` | Dashboard reads current state |
+| `GET` | `/api/events` | Dashboard reads the event timeline |
+
+Run it:
+
+```bash
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Verify:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Expected:
+
+```json
+{"status":"ok"}
+```
+
+Checkpoint A: Do not continue until `/health` works.
+
+## 6. Define the Two Commands
+
+Normal command:
+
+```json
+{
+  "credential": "fleet-agent-valid-token",
+  "agent_id": "fleet-agent-01",
+  "device_id": "fleet-controller-01",
+  "robot_id": "robot-01",
+  "destination": "SAFE_ZONE_B",
+  "speed": 0.8
+}
+```
+
+Attack command:
+
+```json
+{
+  "credential": "fleet-agent-valid-token",
+  "agent_id": "fleet-agent-01",
+  "device_id": "unknown-attacker-device",
+  "robot_id": "robot-01",
+  "destination": "RESTRICTED_ZONE",
+  "speed": 3.5
+}
+```
+
+Important: the attack uses the same valid credential. This proves that token validation alone is insufficient.
+
+## 7. Implement Deterministic Zero-Trust Policies
+
+Evaluate every command independently.
+
+Rules:
+
+1. Credential must be active and unexpired.
+2. Agent must be authorized for `robot-01`.
+3. Device must be expected or explicitly trusted.
+4. Destination must be within the agent's permitted zones.
+5. Speed must be at or below `1.5`.
+6. A revoked credential must never be accepted again.
+
+Decision order:
+
+```text
+Invalid/revoked credential -> BLOCK
+Unauthorized robot         -> BLOCK
+Restricted destination     -> BLOCK
+Excessive speed            -> BLOCK
+Otherwise                  -> ask anomaly detector
+```
+
+When blocked, execute deterministic containment:
+
+```text
+Reject command
+Clear command queue
+Set robot action to STOP
+Set credential status to REVOKED
+Set agent status to QUARANTINED
+Write incident event
+Notify dashboard
+```
+
+Checkpoint B: Send the two JSON requests with `curl` or Swagger at `http://localhost:8000/docs`. Normal must return `ALLOW`; attack must return `BLOCK`.
+
+## 8. Add a Real but Small AI Anomaly Detector
+
+Use scikit-learn `IsolationForest`. Do not train a foundation model.
+
+Generate approximately 500 normal synthetic commands with:
+
+- Speed between `0.3` and `1.2`
+- Known device equal to `1`
+- Restricted destination equal to `0`
+- Commands in last 10 seconds between `0` and `3`
+- Previous failures between `0` and `1`
+
+Model features:
+
+```text
+speed
+known_device
+restricted_destination
+commands_last_10_seconds
+previous_failures
+```
+
+Train once at startup or save with `joblib`. Convert the model result into a clear `risk_score` between `0.0` and `1.0`.
+
+Use this final decision scheme:
+
+```text
+Hard policy violation -> BLOCK regardless of AI
+AI risk >= 0.80       -> BLOCK and contain
+AI risk 0.60-0.79     -> HOLD
+AI risk < 0.60        -> ALLOW
+```
+
+The dashboard must separately display:
+
+- `policy_decision`
+- `anomaly_risk_score`
+- `final_decision`
+- `containment_actions`
+
+Checkpoint C: Demonstrate a valid-looking command from an unknown device receiving a high anomaly score.
+
+## 9. Build a Fake Robot Before Isaac Sim Integration
+
+Create `simulator/fake_robot.py`. It should poll the backend every second.
+
+Behaviour:
+
+```text
+If next command is MOVE -> update position and print MOVING
+If next command is STOP -> set status STOPPED
+If no command           -> wait one second
+```
+
+The fake robot proves the complete security workflow without GPU dependency.
+
+Checkpoint D: Run backend + fake robot. Normal command changes the fake position. Attack command leaves it stopped.
+
+## 10. Check the GPU Environment
+
+As soon as access arrives, run:
+
+```bash
+nvidia-smi
+free -h
+df -h
+python3 --version
+docker --version
+git --version
+```
+
+Record the GPU, free memory and disk space in the team chat.
+
+For AWS:
+
+1. Install/open the NICE DCV client if required.
+2. Connect using the supplied host and credentials.
+3. Open Isaac Sim from the provided workstation desktop/application menu.
+4. Do not reinstall NVIDIA drivers.
+
+For Brev:
+
+1. Redeem the credit.
+2. Select the organizer-recommended Isaac Sim environment/Launchable.
+3. Prefer an L40S/RTX-class GPU.
+4. Start the instance and connect using the provided method.
+5. Confirm Isaac Sim is installed before changing the environment.
+
+If Isaac Sim does not launch within 30 minutes, notify the organizer with the exact error and continue using the fake robot.
+
+Checkpoint E: Isaac Sim opens and displays a blank or sample stage.
+
+## 11. Create the Isaac Sim Scene
+
+Use an existing small warehouse scene. Do not create the building manually.
+
+Add only:
+
+- One existing wheeled/mobile robot
+- A start point
+- `SAFE_ZONE_B`
+- `RESTRICTED_ZONE`
+- One mannequin/human obstacle if readily available
+- One camera/viewport
+
+Use simple visual floor markers or signs for the zones. Exact physical realism is less important than a visible security outcome.
+
+Checkpoint F: Press Play and confirm the scene runs without crashing.
+
+## 12. Control One Robot in Isaac Sim
+
+Before networking, create a Python script that can:
+
+```text
+reset_robot()
+move_robot_to_safe_zone()
+move_robot_to_restricted_zone()
+stop_robot()
+```
+
+Scripted waypoint movement is acceptable. The robot does not need autonomous navigation or reinforcement learning.
+
+Checkpoint G: From Python, make the robot move and stop. Record a short backup video immediately.
+
+## 13. Connect Isaac Sim to OmniGuard
+
+Use simple HTTP polling. Do not introduce ROS unless the scene already depends on it and the team knows it.
+
+Every 0.5-1 second, `isaac_bridge.py` calls:
+
+```http
+GET /api/robots/robot-01/next-command
+```
+
+Interpret responses:
+
+```text
+MOVE SAFE_ZONE_B      -> move to safe waypoint
+MOVE RESTRICTED_ZONE  -> move to restricted waypoint
+STOP                  -> immediately set zero velocity/stop controller
+NONE                  -> do nothing
+```
+
+The bridge posts status back to:
+
+```http
+POST /api/robots/robot-01/telemetry
+```
+
+If the backend and Isaac Sim are on different machines:
+
+1. Bind FastAPI to `0.0.0.0`.
+2. Use the backend machine's reachable IP address.
+3. Test `curl http://BACKEND_IP:8000/health` from the GPU workstation.
+4. If port access is blocked, run the backend on the GPU workstation or use an SSH tunnel.
+
+Checkpoint H: A normal dashboard/API command visibly moves the Isaac robot.
+
+## 14. Build the Streamlit Dashboard
+
+Run:
+
+```bash
+streamlit run dashboard/app.py --server.port 8501
+```
+
+The top of the dashboard should show:
+
+- `Robot: robot-01`
+- `Robot status: STOPPED/MOVING/CONTAINED`
+- `Credential: ACTIVE/REVOKED`
+- `Protection: ON/OFF`
+
+Add four buttons:
+
+1. `Reset Demo`
+2. `Run Normal Operation`
+3. `Run Attack - Protection OFF`
+4. `Run Attack - OmniGuard ON`
+
+Show the latest decision using large colours:
+
+- Green: `ALLOWED`
+- Red: `BLOCKED`
+- Amber: `HELD FOR REVIEW`
+
+Show an event table with timestamp, agent, device, robot, destination, speed, policy result, risk score and action.
+
+Checkpoint I: All four buttons call the backend and update the event timeline.
+
+## 15. Add Claude or OpenAI Last
+
+Use one runtime LLM only. Do not put the LLM in the robot-control path.
+
+After containment, send the incident JSON to Claude through Bedrock or to OpenAI and request strict JSON:
+
+```json
+{
+  "summary": "...",
+  "physical_impact": "...",
+  "why_suspicious": ["..."],
+  "containment_taken": ["..."],
+  "recommended_actions": ["..."]
+}
+```
+
+System instruction:
+
+```text
+You are OmniGuard's cyber-physical incident analyst. Explain only from the supplied evidence. Do not invent facts. Do not issue robot movement commands. Return the requested JSON structure.
+```
+
+If the LLM API fails, show a deterministic incident template. The security block must continue working without the LLM.
+
+Checkpoint J: A blocked attack produces a readable incident explanation within the dashboard.
+
+## 16. Exact Demo Script
+
+Narrator says:
+
+> This robot is controlled by a legitimate fleet agent. OmniGuard evaluates every command using identity context, safety policy and behavioural anomaly detection.
+
+Click `Normal Operation`:
+
+> The identity, device, destination and behaviour are expected, so the command is allowed.
+
+Click `Reset`, then `Attack - Protection OFF`:
+
+> The attacker has stolen a valid agent credential. Traditional authentication accepts it, and the robot begins an unsafe movement toward a restricted human zone.
+
+Click `Reset`, then `Attack - OmniGuard ON`:
+
+> This time OmniGuard sees a valid credential but an unknown device, abnormal speed and restricted destination. It blocks the command, stops the robot, revokes the credential and quarantines the agent.
+
+Show the AI explanation:
+
+> The incident agent now converts the technical evidence into physical-impact analysis and remediation guidance. The LLM explains the event; it is not allowed to control the robot.
+
+Close with:
+
+> NVIDIA provides the physically accurate digital twin. OmniGuard turns it into a cyber-physical red-team and pre-deployment security assurance range.
+
+## 17. Timeline
+
+| Time | Required outcome |
+|---|---|
+| Hour 0-1 | Roles assigned; repository ready; GPU smoke test started; backend `/health` works |
+| Hour 1-3 | Normal allowed and attack blocked through API; fake robot works |
+| Hour 3-6 | Isaac scene loads; robot moves and stops using Python |
+| Hour 6-9 | Isaac bridge receives allowed and stop commands |
+| Hour 9-12 | Dashboard buttons and timeline work |
+| Hour 12-14 | IsolationForest and risk display work |
+| Hour 14-16 | Claude/OpenAI explanation works |
+| Hour 16-18 | UI polish and complete demo rehearsal |
+| Hour 18-20 | Slides, architecture and backup recording |
+| Hour 20-22 | Freeze code; rehearse; export evidence and video |
+
+If more than two hours behind, remove features. Never move the final rehearsal deadline.
+
+## 18. Failure Ladder
+
+| Failure | Immediate fallback |
+|---|---|
+| No GPU allocation | Continue backend/dashboard/fake robot |
+| Isaac Sim installation problem | Use organizer's AMI/Launchable; do not rebuild drivers |
+| Warehouse too heavy | Blank floor plus shelves/cubes and one robot |
+| Robot navigation fails | Script transform/waypoint movement |
+| Network connection fails | Run backend on GPU workstation |
+| IsolationForest misbehaves | Keep hard policies; show anomaly score as secondary |
+| LLM credentials fail | Use deterministic incident template |
+| Live demo unstable | Play backup video and show live dashboard/API |
+
+## 19. Evidence to Save
+
+Before the environment is terminated, save:
+
+- Source repository and final commit hash
+- Final USD scene or scene-setup script
+- Trained anomaly model or deterministic training script
+- Screenshots of normal and blocked events
+- One complete backup demo video
+- Architecture slide
+- Incident JSON and AI explanation
+- README with startup commands
+
+## 20. Final Architecture Statement
+
+```text
+Command source
+    -> OmniGuard API
+        -> token and identity checks
+        -> Zero-Trust safety policies
+        -> IsolationForest anomaly score
+        -> deterministic allow/block/containment
+            -> Isaac Sim robot bridge
+            -> event store and dashboard
+            -> Claude/OpenAI incident explanation
+```
+
+The accurate statement for judges is:
+
+> AI identifies abnormal behaviour and explains incidents. Deterministic, auditable code performs the safety-critical block, stop and credential revocation.

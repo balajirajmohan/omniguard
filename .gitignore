@@ -1,12 +1,29 @@
 .venv/
 __pycache__/
 *.pyc
+*.py[cod]
 .DS_Store
 .claude/
+.env
+logs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.streamlit/secrets.toml
+
+# Local starter kit copy (source material; not part of the app)
+OmniGuard_Starter_Kit*/
+OmniGuard_Starter_Kit*/
 
 # Terraform
 infra/.terraform/
-infra/terraform.tfstate
-infra/terraform.tfstate.*
+infra/*.tfstate
+infra/*.tfstate.*
 infra/terraform.tfvars
 infra/*.pem
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/terraform.tfvars
+infra/terraform/omniguard-isaac.pem
+infra/terraform/crash.log

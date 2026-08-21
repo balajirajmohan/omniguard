@@ -1,89 +1,108 @@
 # OmniGuard
 
-A security broker for robot fleet commands. A robot control token can be
-technically valid and still be misused — OmniGuard checks identity, robot
-authorization, destination zone, speed, device binding and command
-behavior (replay/burst) on every command, and contains the credential the
-moment something looks like a compromise.
+Cyber-physical security broker for warehouse robots inside an NVIDIA Isaac Sim digital twin.
 
-## Status
+A stolen fleet credential may still authenticate — OmniGuard checks identity context, Zero-Trust policy and behavioural anomaly risk, then **deterministically** blocks, stops, revokes and quarantines before unsafe motion becomes a physical incident.
 
-- `broker/`, `scripts/`, `dashboard/` — done, tested locally, no GPU needed.
-- `isaac/` — written against Isaac Sim 6.0's documented API, not yet run on
-  real hardware. See [isaac/README.md](isaac/README.md) and
-  [docs/cloud_gpu_setup.md](docs/cloud_gpu_setup.md) before touching it.
-- `infra/` — Terraform for the AWS GPU instance Isaac Sim needs (this repo's
-  dev machine is macOS, which can't run Isaac Sim at all). Syntax-validated
-  with `terraform validate`, not yet applied against a real AWS account.
-  See [infra/README.md](infra/README.md) — `terraform apply` creates a
-  real, billable GPU instance, so that step is left for you to run and
-  confirm deliberately.
+> NVIDIA provides the physically accurate world. OmniGuard turns it into a cyber-physical red-team range.
 
-## Run the broker + demo locally (no Isaac Sim required)
+## Aligned layout (hackathon MVP)
 
-### Option A — Dev Container (zero local setup)
-
-Open in [VS Code](https://code.visualstudio.com/) with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers), or launch in GitHub Codespaces:
-
-1. Open the repo in VS Code.
-2. When prompted **"Reopen in Container"**, click it (or run **Dev Containers: Reopen in Container** from the command palette).
-3. The container builds, installs dependencies, and runs `honcho start` automatically via `.devcontainer/devcontainer.json`.
-
-- **Broker API** → http://localhost:8000 *(forwarded automatically)*
-- **Dashboard UI** → http://localhost:8501 *(opens in browser automatically)*
-
-### Option B — one command with honcho (local)
-
-[honcho](https://honcho.readthedocs.io) reads the [`Procfile`](Procfile) and starts the broker + dashboard together with colour-coded output.
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt   # installs honcho too
-
-honcho start
+```text
+omniguard/
+├── backend/          # FastAPI: policy + IsolationForest + incident AI
+├── dashboard/        # Four-button Streamlit demo
+├── simulator/        # fake_robot.py + isaac_bridge.py (same HTTP contract)
+├── isaac/            # GPU-day helpers (command bridge / warehouse starter)
+├── tests/
+├── docs/RUNBOOK.md   # 22-hour event runbook
+├── infra/terraform/  # Preferred AWS Isaac Marketplace workstation
+├── requirements.txt
+├── .env.example
+└── Procfile
 ```
 
-Press `Ctrl+C` to stop both services at once.
+## Quick start (no GPU)
 
-### Option C — manual terminals
+```bash
+bash scripts/setup.sh
+bash scripts/run_demo.sh
+```
+
+Or with honcho:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-uvicorn broker.main:app --reload   # terminal 1
-
-python3 scripts/normal_client.py   # terminal 2 — expect ALLOW
-python3 scripts/attack_client.py   # terminal 2 — expect DENY, then DENY again (revoked)
+honcho start
 ```
 
-## Dashboard
+Open:
+
+| Surface | URL |
+|---------|-----|
+| Dashboard | http://127.0.0.1:8501 |
+| API docs | http://127.0.0.1:8000/docs |
+| Health | http://127.0.0.1:8000/health |
+
+### Four-button demo
+
+1. **Normal Operation** — ALLOW; fake robot moves to `SAFE_ZONE_B`
+2. **Attack — Protection OFF** — dangerous command reaches the robot (before/after)
+3. **Attack — OmniGuard ON** — BLOCK; stop; revoke; quarantine; incident explanation
+4. **Reset Demo** — restore baseline
 
 ```bash
-streamlit run dashboard/app.py
+pytest -q
 ```
 
-Buttons trigger the same normal/attack flows as the scripts, and render the
-live incident feed, revoked-token count and quarantined-identity list.
+## API contract (source of truth)
 
-## Wiring in real Isaac Sim
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/health` | Liveness |
+| POST | `/api/reset` | Reset demo state |
+| POST | `/api/commands` | Evaluate a movement command |
+| POST | `/api/demo/normal` | Scripted normal path |
+| POST | `/api/demo/attack?protection=` | Scripted attack ON/OFF |
+| GET | `/api/state` | Dashboard state |
+| GET | `/api/events` | Evidence timeline |
+| GET | `/api/robots/robot-01/next-command` | Simulator poll |
+| POST | `/api/robots/robot-01/telemetry` | Simulator ack |
 
-By default the broker uses `MockRobotController` (logs moves, no sim).
-Once Isaac Sim is running on a GPU host with the bridge from `isaac/`:
+## Decision scheme
+
+```text
+Protection OFF              -> ALLOW (unsafe path for judges)
+Hard policy violation       -> BLOCK + contain
+AI risk >= 0.80             -> BLOCK + contain
+AI risk 0.60–0.79           -> HOLD
+AI risk < 0.60              -> ALLOW
+```
+
+Safety-critical block/stop/revoke is **deterministic**. IsolationForest scores risk; Bedrock/Claude (optional) only explains incidents.
 
 ```bash
-export OMNIGUARD_ROBOT_BACKEND=isaac
-export ISAAC_BRIDGE_URL=http://<gpu-host-ip>:8899
-uvicorn broker.main:app --reload
+export LLM_PROVIDER=bedrock
+export AWS_REGION=ap-south-1
+export BEDROCK_MODEL_ID=your-claude-model-id
 ```
 
-## Security model
+## Isaac Sim
 
-See the policy engine in [broker/policy.py](broker/policy.py). Every
-`/command` request is checked for: token validity/expiry, revocation,
-identity quarantine, robot authorization, zone permission (with `HUMAN_ZONE`
-requiring an explicit `human_zone_authorized` claim even if listed), speed
-limit, device binding, replay, and command burst. Any "critical" violation
-(the ones that indicate misuse rather than a benign error) triggers full
-containment: revoke the token's `jti`, quarantine the identity, emergency-
-stop the robot, and log a red incident card.
+1. Prove the laptop demo first (`fake_robot`).
+2. On GPU: load a small warehouse + one mobile robot; implement TODOs in [`simulator/isaac_bridge.py`](simulator/isaac_bridge.py).
+3. Stop `fake_robot` so only Isaac consumes the command queue.
+4. Optional helpers: [`isaac/`](isaac/) (in-process HTTP bridge / warehouse starter).
+
+GPU day-zero: [docs/isaac-setup.md](docs/isaac-setup.md) · Terraform: [infra/terraform/README.md](infra/terraform/README.md)
+
+## Docs
+
+- **Event runbook:** [docs/RUNBOOK.md](docs/RUNBOOK.md)
+- **Alignment notes:** [docs/ALIGNMENT.md](docs/ALIGNMENT.md)
+- **Demo script:** [docs/demo-script.md](docs/demo-script.md)
+
+## Honest judge line
+
+> AI detects abnormal behaviour and explains incidents. Deterministic, auditable code performs the safety-critical block, stop and credential revocation.
