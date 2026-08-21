@@ -48,7 +48,7 @@ function Toggle({ checked, onChange, tone, title, hint }) {
   );
 }
 
-export default function ControlPanel({ panel, state, onStick, external, options, setOptions }) {
+export default function ControlPanel({ panel, state, onStick, padRef, options, setOptions }) {
   const rogue = panel === 'rogue';
   const tone = rogue ? 'bad' : 'ok';
   const blocked = state.lamp === 'block';
@@ -113,7 +113,8 @@ export default function ControlPanel({ panel, state, onStick, external, options,
         <Joystick
           tone={tone}
           onChange={onStick}
-          external={external}
+          padRef={padRef}
+          panelId={panel}
           label={`${rogue ? 'Rogue' : 'Operator'} joystick — arrow keys or WASD to drive`}
         />
         <div className="grid min-w-[164px] flex-1 gap-2">

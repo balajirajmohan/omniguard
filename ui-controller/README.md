@@ -88,9 +88,38 @@ failing silently.
 
 ## Input
 
-Pointer drag, arrow keys or WASD while focused, and a real gamepad — left stick
-drives the operator, right stick the attacker. `navigator.getGamepads()` needs a
-secure context, which `127.0.0.1` provides.
+Pointer drag, arrow keys or WASD while focused, and a real gamepad.
+
+### PS5 / DualSense
+
+Works over USB or Bluetooth. A DualSense reports `mapping: "standard"`, so:
+
+| Control | Does |
+|---|---|
+| Left stick | Drives the **operator** plane |
+| Right stick | Drives the **rogue** plane |
+| Circle | Emergency stop — ends every active lease via `/api/teleop/stop` |
+
+Two things to know:
+
+- **`navigator.getGamepads()` requires a secure context.** `npm run dev` binds
+  `127.0.0.1`, which qualifies. Opening the same page over plain http on a LAN IP
+  hides the Gamepad API entirely and the label says so.
+- **Chrome exposes nothing until the pad sends input.** Plugging in is not enough
+  — press any button once. The status label reads
+  `press any button to connect` rather than the misleading "none connected".
+
+The pad is sampled on `requestAnimationFrame` (display rate) and written straight
+to the thumb's transform, so stick motion is smooth and causes no React
+re-renders. Movement is still *sent* at the backend's `stream_hz`. Sampling on
+the send tick is what used to make it feel stepped.
+
+Releasing a physical stick publishes an explicit zero, so the on-screen thumb
+springs back. Publishing `null` on release was the bug that left it stuck at full
+deflection while control had already stopped.
+
+Non-standard mappings are detected and flagged in the label rather than silently
+reading the wrong axes.
 
 ## Layout
 

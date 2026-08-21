@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   DEADZONE, FALLBACK_TELEOP_CONFIG, LOOKAHEAD,
   clamp, getEvents, getHealth, getState, getTeleopConfig, getTimeline,
-  readPosition, rejectionReasons, resetBackend, speedFor, teleopMove, teleopStart,
-  teleopStop, zoneAt,
+  padEstopPressed, padStickFor, readPosition, rejectionReasons, resetBackend,
+  speedFor, teleopMove, teleopStart, teleopStop, zoneAt,
 } from './omniguard.js';
 
 const PANEL_IDS = ['legit', 'rogue'];
@@ -52,7 +52,9 @@ export function useController(cfg) {
   const [timeline, setTimeline] = useState([]);
   const [health, setHealth] = useState(null);
   const [padLabel, setPadLabel] = useState('Gamepad: checking…');
-  const [external, setExternal] = useState({ legit: null, rogue: null });
+  /* Mutable so the pad can drive the sticks at display rate without re-rendering. */
+  const padRef = useRef(fromEntries(() => ({ vec: { x: 0, y: 0 }, mag: 0, active: false })));
+  const estopRef = useRef(null);
   const [resetting, setResetting] = useState(false);
 
   /* Physical pose, from the backend only. Never estimated — a map that invents
@@ -188,27 +190,81 @@ export function useController(cfg) {
     }
   }, [patch, pushLog, stopSession]);
 
-  /* ------------------------------------------------------------- gamepad */
-  const pollGamepad = useCallback(() => {
-    if (!navigator.getGamepads) return;
-    const pad = Array.from(navigator.getGamepads()).find(Boolean);
-    if (!pad) return;
-    const next = { legit: null, rogue: null };
-    PANEL_IDS.forEach((id, i) => {
-      const x = pad.axes[i * 2] ?? 0;
-      const y = -(pad.axes[i * 2 + 1] ?? 0);
-      const mag = Math.min(1, Math.hypot(x, y));
-      const s = sessions.current[id];
-      if (mag > DEADZONE) {
-        sticks.current[id] = { vec: { x, y }, mag };
-        next[id] = { vec: { x, y }, mag };
-        s.padActive = true;
-      } else if (s.padActive) {
-        sticks.current[id] = blankStick();
-        s.padActive = false;
+  /* ------------------------------------------------------------- gamepad
+   * Sampled on requestAnimationFrame (display rate), NOT on the send tick.
+   * Sending at stream_hz is correct; sampling a physical stick at 8 Hz makes it
+   * feel stepped. Results go into refs so 60 Hz of stick motion causes zero
+   * React re-renders — the send loop and the thumb both read the ref.
+   *
+   * Standard mapping (DualSense over USB or Bluetooth reports "standard"):
+   *   axes[0..1] left stick -> operator      axes[2..3] right stick -> attacker
+   *   buttons[1] Circle -> emergency stop
+   */
+  useEffect(() => {
+    if (!navigator.getGamepads) {
+      setPadLabel('Gamepad: needs https or 127.0.0.1');
+      return undefined;
+    }
+
+    let frame;
+    let estopWasDown = false;
+    let lastId = null;
+
+    const sample = () => {
+      const pad = Array.from(navigator.getGamepads?.() ?? []).find(Boolean);
+
+      if (!pad) {
+        if (lastId !== null) {
+          lastId = null;
+          /* Chrome exposes nothing until the pad sends input, so "none" is not
+           * the same as "not plugged in". Say what actually unblocks it. */
+          setPadLabel('Gamepad: press any button to connect');
+          for (const id of PANEL_IDS) {
+            if (padRef.current[id].active) {
+              padRef.current[id] = { vec: { x: 0, y: 0 }, mag: 0, active: false };
+              sticks.current[id] = blankStick();
+            }
+          }
+        }
+        frame = requestAnimationFrame(sample);
+        return;
       }
-    });
-    setExternal(next);
+
+      if (pad.index !== lastId) {
+        lastId = pad.index;
+        const nonStandard = pad.mapping !== 'standard';
+        setPadLabel(`Gamepad: ${pad.id.slice(0, 28)}${nonStandard ? ' (non-standard mapping)' : ''}`);
+      }
+
+      PANEL_IDS.forEach((id, i) => {
+        const next = padStickFor(pad, i);
+        const slot = padRef.current[id];
+        if (next.active) {
+          padRef.current[id] = next;
+          sticks.current[id] = { vec: next.vec, mag: next.mag };
+        } else if (slot.active) {
+          /* Released: publish an explicit zero so the thumb springs back.
+           * Publishing null here is what used to leave it stuck deflected. */
+          padRef.current[id] = next;
+          sticks.current[id] = blankStick();
+        }
+      });
+
+      const estop = padEstopPressed(pad);
+      if (estop && !estopWasDown) {
+        for (const id of PANEL_IDS) {
+          padRef.current[id] = { vec: { x: 0, y: 0 }, mag: 0, active: false };
+          sticks.current[id] = blankStick();
+        }
+        estopRef.current?.();
+      }
+      estopWasDown = estop;
+
+      frame = requestAnimationFrame(sample);
+    };
+
+    frame = requestAnimationFrame(sample);
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   /* ------------------------------------------------------------ the loop */
@@ -217,7 +273,6 @@ export function useController(cfg) {
     const tickMs = Math.max(60, Math.round(1000 / hz));
 
     const tick = () => {
-      pollGamepad();
       const conf = teleopRef.current;
       const maxSpeed = conf.max_speed ?? 1.5;
       const setpoints = [];
@@ -274,7 +329,7 @@ export function useController(cfg) {
 
     const handle = setInterval(tick, tickMs);
     return () => clearInterval(handle);
-  }, [teleopConfig, patch, pollGamepad, pushLog, sendPacket, startSession, stopSession]);
+  }, [teleopConfig, patch, pushLog, sendPacket, startSession, stopSession]);
 
   /* ------------------------------------------------------ state polling */
   useEffect(() => {
@@ -333,22 +388,6 @@ export function useController(cfg) {
     return () => { alive = false; };
   }, [cfg.api]);
 
-  /* -------------------------------------------------------------- gamepad ui */
-  useEffect(() => {
-    const refresh = () => {
-      if (!navigator.getGamepads) { setPadLabel('Gamepad: needs https or 127.0.0.1'); return; }
-      const pad = Array.from(navigator.getGamepads()).find(Boolean);
-      setPadLabel(pad ? `Gamepad: ${pad.id.slice(0, 32)}` : 'Gamepad: none connected');
-    };
-    refresh();
-    window.addEventListener('gamepadconnected', refresh);
-    window.addEventListener('gamepaddisconnected', refresh);
-    return () => {
-      window.removeEventListener('gamepadconnected', refresh);
-      window.removeEventListener('gamepaddisconnected', refresh);
-    };
-  }, []);
-
   /* --------------------------------------------------------------- deadman
    * The backend runs the authoritative deadman. The UI still stops proactively
    * so a hidden tab or lost focus does not rely on a timeout to halt motion. */
@@ -371,6 +410,17 @@ export function useController(cfg) {
       window.removeEventListener('pagehide', onHide);
       halt('COMPONENT_UNMOUNTED');
     };
+  }, [stopSession]);
+
+  /* Physical stop button on the pad. Routed through the same backend stop the
+   * software paths use — it is not a client-side shortcut around the broker. */
+  useEffect(() => {
+    estopRef.current = () => {
+      for (const id of PANEL_IDS) {
+        if (sessions.current[id].phase !== 'idle') stopSession(id, 'GAMEPAD_EMERGENCY_STOP');
+      }
+    };
+    return () => { estopRef.current = null; };
   }, [stopSession]);
 
   /* ---------------------------------------------------------------- reset */
@@ -396,6 +446,6 @@ export function useController(cfg) {
   return {
     view, world, status, events, timeline, health,
     teleopConfig, gatewayReady,
-    options, setOptions, setStick, external, padLabel, reset, resetting,
+    options, setOptions, setStick, padRef, padLabel, reset, resetting,
   };
 }
