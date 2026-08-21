@@ -1,17 +1,20 @@
-import { useCallback, useMemo, useState } from 'react';
-import { PlugZap, Radar, ShieldAlert } from 'lucide-react';
-import ControlPanel from './components/ControlPanel.jsx';
-import DecisionCard from './components/DecisionCard.jsx';
-import InvestigatePanel from './components/InvestigatePanel.jsx';
-import ScenarioPanel from './components/ScenarioPanel.jsx';
-import SettingsSheet from './components/SettingsSheet.jsx';
-import TelemetryRail from './components/TelemetryRail.jsx';
-import TopBar from './components/TopBar.jsx';
-import WarehouseMap from './components/WarehouseMap.jsx';
+import {useCallback, useMemo, useState} from "react";
+import {PlugZap, Radar, ShieldAlert} from "lucide-react";
+import ControlPanel from "./components/ControlPanel.jsx";
+import DecisionCard from "./components/DecisionCard.jsx";
+import InvestigatePanel from "./components/InvestigatePanel.jsx";
+import ScenarioPanel from "./components/ScenarioPanel.jsx";
+import SettingsSheet from "./components/SettingsSheet.jsx";
+import TelemetryRail from "./components/TelemetryRail.jsx";
+import TopBar from "./components/TopBar.jsx";
+import WarehouseMap from "./components/WarehouseMap.jsx";
 import {
-  DEMO_CREDENTIAL, DEMO_OPERATOR_TOKEN, loadConfig, saveConfig,
-} from './lib/omniguard.js';
-import { useController } from './lib/useController.js';
+  DEMO_CREDENTIAL,
+  DEMO_OPERATOR_TOKEN,
+  loadConfig,
+  saveConfig,
+} from "./lib/omniguard.js";
+import {useController} from "./lib/useController.js";
 
 export default function App() {
   const [cfg, setCfg] = useState(loadConfig);
@@ -25,7 +28,9 @@ export default function App() {
     const polled = ctl.events[0];
     if (!scenarioResult) return polled;
     if (!polled) return scenarioResult;
-    return new Date(polled.timestamp) >= new Date(scenarioResult.timestamp) ? polled : scenarioResult;
+    return new Date(polled.timestamp) >= new Date(scenarioResult.timestamp)
+      ? polled
+      : scenarioResult;
   }, [ctl.events, scenarioResult]);
 
   const onSave = useCallback((next) => {
@@ -41,7 +46,7 @@ export default function App() {
   }, []);
 
   const stickHandler = (id) => (next) => ctl.setStick(id, next);
-  const revoked = ctl.status.credential_status === 'REVOKED';
+  const revoked = ctl.status.credential_status === "REVOKED";
 
   return (
     <div className="mx-auto min-h-screen max-w-[1560px] px-4 py-4 sm:px-5">
@@ -52,37 +57,56 @@ export default function App() {
         settingsOpen={showSettings}
         health={ctl.health}
         gatewayReady={ctl.gatewayReady}
-        onReset={() => { setScenarioResult(null); ctl.reset(); }}
+        onReset={() => {
+          setScenarioResult(null);
+          ctl.reset();
+        }}
         onToggleSettings={() => setShowSettings((v) => !v)}
       />
 
       {showSettings && (
-        <SettingsSheet cfg={cfg} onSave={onSave} onClose={() => setShowSettings(false)} />
+        <SettingsSheet
+          cfg={cfg}
+          onSave={onSave}
+          onClose={() => setShowSettings(false)}
+        />
       )}
 
       {ctl.gatewayReady === false && (
-        <div role="status"
+        <div
+          role="status"
           className="a-rise mb-3 flex items-start gap-3 rounded-2xl border border-warn/50 bg-warn/10 px-4 py-3">
-          <PlugZap size={17} className="mt-0.5 shrink-0 text-warn" aria-hidden="true" />
+          <PlugZap
+            size={17}
+            className="mt-0.5 shrink-0 text-warn"
+            aria-hidden="true"
+          />
           <p className="text-[13px] leading-relaxed text-dim">
-            <b className="text-warn">Teleop gateway not deployed.</b>{' '}
-            <span className="font-mono text-[12px]">/api/teleop/config</span> is not answering on{' '}
-            <span className="font-mono text-[12px]">{cfg.api}</span>, so the joysticks have nothing
-            to authorize against. Scenarios, telemetry and investigation still work. Zone geometry
-            below is the contract default, not server-authoritative.
+            <b className="text-warn">Teleop gateway not deployed.</b>{" "}
+            <span className="font-mono text-[12px]">/api/teleop/config</span> is
+            not answering on{" "}
+            <span className="font-mono text-[12px]">{cfg.api}</span>, so the
+            joysticks have nothing to authorize against. Scenarios, telemetry
+            and investigation still work. Zone geometry below is the contract
+            default, not server-authoritative.
           </p>
         </div>
       )}
 
       {revoked && (
-        <div role="alert"
+        <div
+          role="alert"
           className="a-rise mb-3 flex items-start gap-3 rounded-2xl border border-bad/50 bg-bad/10 px-4 py-3">
-          <ShieldAlert size={17} className="mt-0.5 shrink-0 text-bad" aria-hidden="true" />
+          <ShieldAlert
+            size={17}
+            className="mt-0.5 shrink-0 text-bad"
+            aria-hidden="true"
+          />
           <p className="text-[13px] leading-relaxed text-dim">
-            <b className="text-bad">Credential revoked.</b>{' '}
-            The rogue controller burned the shared fleet credential, so the legitimate operator is
-            locked out too. That is the blast radius of a shared credential — press{' '}
-            <b className="text-txt">Reset demo</b> to rotate it.
+            <b className="text-bad">Credential revoked.</b> The rogue controller
+            burned the shared fleet credential, so the legitimate operator is
+            locked out too. That is the blast radius of a shared credential —
+            press <b className="text-txt">Reset demo</b> to rotate it.
           </p>
         </div>
       )}
@@ -92,11 +116,15 @@ export default function App() {
         <div className="card p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h2 className="flex items-center gap-2 text-[15px]">
-              <Radar size={15} className="text-info" aria-hidden="true" />Warehouse floor
+              <Radar size={15} className="text-info" aria-hidden="true" />
+              Warehouse floor
             </h2>
             <span className="font-mono text-[11px] text-faint">
-              {ctl.world.setpoints.length > 0 ? 'tracking setpoint' : 'holding position'}
-              {ctl.status.bridge?.speed != null && ` · ${ctl.status.bridge.speed} m/s`}
+              {ctl.world.setpoints.length > 0
+                ? "tracking setpoint"
+                : "holding position"}
+              {ctl.status.bridge?.speed != null &&
+                ` · ${ctl.status.bridge.speed} m/s`}
             </span>
           </div>
           <WarehouseMap
@@ -118,7 +146,7 @@ export default function App() {
       </section>
 
       <main className="a-stagger grid gap-3 lg:grid-cols-2">
-        {['legit', 'rogue'].map((id) => (
+        {["legit", "rogue"].map((id) => (
           <ControlPanel
             key={id}
             panel={id}
@@ -127,18 +155,20 @@ export default function App() {
             padRef={ctl.padRef}
             options={ctl.options}
             setOptions={ctl.setOptions}
+            onArmPreset={ctl.sendArmPreset}
+            onGripper={ctl.sendGripper}
           />
         ))}
       </main>
 
       <footer className="mt-3 flex flex-wrap justify-between gap-3 text-[11px] text-faint">
         <span>
-          Left stick drives the operator · right stick the attacker · Circle is an emergency stop ·
-          pointer, arrows and WASD also work
+          Left stick drives the operator · right stick the attacker · Circle is
+          an emergency stop · pointer, arrows and WASD also work
         </span>
         <span>
-          Browser → OmniGuard {cfg.api} → secured bridge → Isaac. The browser never contacts the
-          bridge and never holds its token.
+          Browser → OmniGuard {cfg.api} → secured bridge → Isaac. The browser
+          never contacts the bridge and never holds its token.
         </span>
       </footer>
     </div>

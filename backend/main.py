@@ -123,6 +123,30 @@ class TeleopStopRequest(BaseModel):
     reason: str = "JOYSTICK_RELEASED"
 
 
+class TeleopArmPresetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    control_id: str
+    robot_id: str = "robot-01"
+    preset: str
+
+
+class TeleopArmJointsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    control_id: str
+    robot_id: str = "robot-01"
+    targets_degrees: dict[str, float]
+
+
+class TeleopGripperRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    control_id: str
+    robot_id: str = "robot-01"
+    action: str
+
+
 class Telemetry(BaseModel):
     status: str
     zone: str
@@ -697,6 +721,21 @@ def teleop_start(body: TeleopStartRequest) -> dict[str, Any]:
 @app.post("/api/teleop/move")
 def teleop_move(body: TeleopMoveRequest) -> dict[str, Any]:
     return teleop_manager.move(body.model_dump())
+
+
+@app.post("/api/teleop/arm/preset")
+def teleop_arm_preset(body: TeleopArmPresetRequest) -> dict[str, Any]:
+    return teleop_manager.arm_preset(body.model_dump())
+
+
+@app.post("/api/teleop/arm/joints")
+def teleop_arm_joints(body: TeleopArmJointsRequest) -> dict[str, Any]:
+    return teleop_manager.arm_joints(body.model_dump())
+
+
+@app.post("/api/teleop/gripper")
+def teleop_gripper(body: TeleopGripperRequest) -> dict[str, Any]:
+    return teleop_manager.gripper(body.model_dump())
 
 
 @app.post("/api/teleop/stop")

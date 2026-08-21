@@ -52,49 +52,54 @@ class IsaacRobotController(RobotController):
             "X-OmniGuard-Bridge-Token": self.token,
         }
 
+    def _post_queued(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            resp = requests.post(
+                f"{self.base_url}{path}",
+                json=payload,
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            if resp.status_code == 401:
+                return {"ok": False, "error": "unauthorized"}
+            resp.raise_for_status()
+            body = resp.json()
+            return {
+                "ok": True,
+                "command_id": body.get("command_id"),
+                "status": body.get("status", "QUEUED"),
+            }
+        except requests.RequestException as exc:
+            logger.exception("Isaac bridge request failed path=%s payload=%s", path, payload)
+            return {"ok": False, "error": str(exc)}
+
     def move_to_queued(
         self, robot_id: str, x: float, y: float, speed: float
     ) -> dict[str, Any]:
-        try:
-            resp = requests.post(
-                f"{self.base_url}/move",
-                json={"robot_id": robot_id, "x": x, "y": y, "speed": speed},
-                headers=self._headers(),
-                timeout=self.timeout,
-            )
-            if resp.status_code == 401:
-                return {"ok": False, "error": "unauthorized"}
-            resp.raise_for_status()
-            body = resp.json()
-            return {
-                "ok": True,
-                "command_id": body.get("command_id"),
-                "status": body.get("status", "QUEUED"),
-            }
-        except requests.RequestException as exc:
-            logger.exception("Isaac bridge move_to failed for robot=%s", robot_id)
-            return {"ok": False, "error": str(exc)}
+        return self._post_queued(
+            "/move", {"robot_id": robot_id, "x": x, "y": y, "speed": speed}
+        )
+
+    def arm_preset_queued(self, robot_id: str, preset: str) -> dict[str, Any]:
+        return self._post_queued(
+            "/arm/preset", {"robot_id": robot_id, "preset": preset}
+        )
+
+    def arm_joints_queued(
+        self, robot_id: str, targets_degrees: dict[str, float]
+    ) -> dict[str, Any]:
+        return self._post_queued(
+            "/arm/joints",
+            {"robot_id": robot_id, "targets_degrees": targets_degrees},
+        )
+
+    def gripper_queued(self, robot_id: str, action: str) -> dict[str, Any]:
+        return self._post_queued(
+            "/gripper", {"robot_id": robot_id, "action": action}
+        )
 
     def emergency_stop_queued(self, robot_id: str) -> dict[str, Any]:
-        try:
-            resp = requests.post(
-                f"{self.base_url}/stop",
-                json={"robot_id": robot_id},
-                headers=self._headers(),
-                timeout=self.timeout,
-            )
-            if resp.status_code == 401:
-                return {"ok": False, "error": "unauthorized"}
-            resp.raise_for_status()
-            body = resp.json()
-            return {
-                "ok": True,
-                "command_id": body.get("command_id"),
-                "status": body.get("status", "QUEUED"),
-            }
-        except requests.RequestException as exc:
-            logger.exception("Isaac bridge emergency_stop failed for robot=%s", robot_id)
-            return {"ok": False, "error": str(exc)}
+        return self._post_queued("/stop", {"robot_id": robot_id})
 
     def get_command_status(self, command_id: str) -> str | None:
         try:

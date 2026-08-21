@@ -145,6 +145,106 @@ def test_bridge_failure_surfaced(monkeypatch):
     assert "BRIDGE_FAILURE" in move["reasons"]
 
 
+def test_valid_arm_preset_reaches_actuation(monkeypatch):
+    monkeypatch.setenv("OMNIGUARD_ROBOT_BACKEND", "isaac")
+    calls = []
+
+    def fake_arm(robot_id, preset):
+        calls.append((robot_id, preset))
+        return ActuationResult(True, "QUEUED", command_id="arm-cmd-1")
+
+    monkeypatch.setattr("backend.teleop.maybe_actuate_arm_preset", fake_arm)
+    start = _start().json()
+    result = client.post(
+        "/api/teleop/arm/preset",
+        json={
+            "control_id": start["control_id"],
+            "robot_id": "robot-01",
+            "preset": "reach",
+        },
+    ).json()
+    assert result["status"] == "QUEUED"
+    assert result["command_id"] == "arm-cmd-1"
+    assert result["preset"] == "reach"
+    assert calls == [("robot-01", "reach")]
+
+
+def test_valid_gripper_reaches_actuation(monkeypatch):
+    monkeypatch.setenv("OMNIGUARD_ROBOT_BACKEND", "isaac")
+    calls = []
+
+    def fake_gripper(robot_id, action):
+        calls.append((robot_id, action))
+        return ActuationResult(True, "QUEUED", command_id="grip-cmd-1")
+
+    monkeypatch.setattr("backend.teleop.maybe_actuate_gripper", fake_gripper)
+    start = _start().json()
+    result = client.post(
+        "/api/teleop/gripper",
+        json={
+            "control_id": start["control_id"],
+            "robot_id": "robot-01",
+            "action": "close",
+        },
+    ).json()
+    assert result["status"] == "QUEUED"
+    assert result["command_id"] == "grip-cmd-1"
+    assert result["action"] == "close"
+    assert calls == [("robot-01", "close")]
+
+
+def test_arm_preset_unknown_lease_rejected(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "backend.teleop.maybe_actuate_arm_preset",
+        lambda *args: calls.append(args) or ActuationResult(True, "QUEUED"),
+    )
+    result = client.post(
+        "/api/teleop/arm/preset",
+        json={
+            "control_id": "not-a-real-lease",
+            "robot_id": "robot-01",
+            "preset": "reach",
+        },
+    ).json()
+    assert result["status"] == "REJECTED"
+    assert "UNKNOWN_OR_MISMATCHED_LEASE" in result["reasons"]
+    assert calls == []
+
+
+def test_gripper_revoked_credential_rejected(monkeypatch):
+    monkeypatch.setattr(
+        "backend.teleop.maybe_actuate_stop",
+        lambda *_a, **_k: ActuationResult(True, "EXECUTED", command_id="stop"),
+    )
+    calls = []
+    monkeypatch.setattr(
+        "backend.teleop.maybe_actuate_gripper",
+        lambda *args: calls.append(args) or ActuationResult(True, "QUEUED"),
+    )
+    start = _start().json()
+    client.post(
+        "/api/commands",
+        json={
+            "credential": "fleet-agent-valid-token",
+            "device_id": "rogue-controller",
+            "destination": "RESTRICTED_ZONE",
+            "speed": 3.5,
+        },
+    )
+    result = client.post(
+        "/api/teleop/gripper",
+        json={
+            "control_id": start["control_id"],
+            "robot_id": "robot-01",
+            "action": "close",
+        },
+    ).json()
+    assert result["status"] == "REJECTED"
+    assert "REVOKED_CREDENTIAL" in result["reasons"]
+    assert calls == []
+
+
 def test_replayed_sequence_rejected(monkeypatch):
     monkeypatch.setattr(
         "backend.teleop.maybe_actuate_stop",

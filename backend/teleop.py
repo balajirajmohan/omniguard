@@ -14,7 +14,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from backend.actuation import maybe_actuate_move_xy, maybe_actuate_stop
+from backend.actuation import (
+    maybe_actuate_arm_joints,
+    maybe_actuate_arm_preset,
+    maybe_actuate_gripper,
+    maybe_actuate_move_xy,
+    maybe_actuate_stop,
+)
 from backend.anomaly import detector
 from backend.policy import HARD_VIOLATIONS, KNOWN_DEVICE, collect_reasons
 from backend.zones import (
@@ -357,6 +363,95 @@ class TeleopManager:
             "zone": zone,
         }
 
+    def arm_preset(self, payload: dict[str, Any]) -> dict[str, Any]:
+        control_id = str(payload.get("control_id", ""))
+        robot_id = str(payload.get("robot_id", "robot-01"))
+        preset = str(payload.get("preset", "")).strip().lower()
+        if preset not in {"stow", "carry", "reach", "inspect"}:
+            return self._reject_aux_command(
+                control_id=control_id,
+                robot_id=robot_id,
+                reasons=["INVALID_ARM_PRESET"],
+                stop=False,
+            )
+
+        rejection = self._validate_aux_command(control_id, robot_id)
+        if rejection is not None:
+            return rejection
+
+        actuation = maybe_actuate_arm_preset(robot_id, preset)
+        return self._aux_actuation_result(
+            control_id=control_id,
+            robot_id=robot_id,
+            kind="arm_preset",
+            action=f"ARM_PRESET_{preset.upper()}",
+            actuation=actuation,
+            extra={"preset": preset},
+        )
+
+    def arm_joints(self, payload: dict[str, Any]) -> dict[str, Any]:
+        control_id = str(payload.get("control_id", ""))
+        robot_id = str(payload.get("robot_id", "robot-01"))
+        raw_targets = payload.get("targets_degrees", {})
+        if not isinstance(raw_targets, dict) or not raw_targets:
+            return self._reject_aux_command(
+                control_id=control_id,
+                robot_id=robot_id,
+                reasons=["INVALID_ARM_JOINTS"],
+                stop=False,
+            )
+        targets_degrees: dict[str, float] = {}
+        try:
+            for name, value in raw_targets.items():
+                targets_degrees[str(name)] = _finite(value, str(name))
+        except ValueError as exc:
+            return self._reject_aux_command(
+                control_id=control_id,
+                robot_id=robot_id,
+                reasons=[str(exc)],
+                stop=False,
+            )
+
+        rejection = self._validate_aux_command(control_id, robot_id)
+        if rejection is not None:
+            return rejection
+
+        actuation = maybe_actuate_arm_joints(robot_id, targets_degrees)
+        return self._aux_actuation_result(
+            control_id=control_id,
+            robot_id=robot_id,
+            kind="arm_joints",
+            action="ARM_JOINTS",
+            actuation=actuation,
+            extra={"targets_degrees": targets_degrees},
+        )
+
+    def gripper(self, payload: dict[str, Any]) -> dict[str, Any]:
+        control_id = str(payload.get("control_id", ""))
+        robot_id = str(payload.get("robot_id", "robot-01"))
+        action = str(payload.get("action", "")).strip().lower()
+        if action not in {"open", "close"}:
+            return self._reject_aux_command(
+                control_id=control_id,
+                robot_id=robot_id,
+                reasons=["INVALID_GRIPPER_ACTION"],
+                stop=False,
+            )
+
+        rejection = self._validate_aux_command(control_id, robot_id)
+        if rejection is not None:
+            return rejection
+
+        actuation = maybe_actuate_gripper(robot_id, action)
+        return self._aux_actuation_result(
+            control_id=control_id,
+            robot_id=robot_id,
+            kind="gripper",
+            action=f"GRIPPER_{action.upper()}",
+            actuation=actuation,
+            extra={"action": action},
+        )
+
     def stop(self, payload: dict[str, Any]) -> dict[str, Any]:
         control_id = str(payload.get("control_id", ""))
         robot_id = str(payload.get("robot_id", "robot-01"))
@@ -514,6 +609,138 @@ class TeleopManager:
             "control_id": control_id,
             "sequence": sequence,
             "zone": zone,
+        }
+
+    def _validate_aux_command(
+        self, control_id: str, robot_id: str
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            lease = self._by_id.get(control_id)
+            if lease is None or lease.robot_id != robot_id:
+                return self._reject_aux_command(
+                    control_id=control_id,
+                    robot_id=robot_id,
+                    reasons=["UNKNOWN_OR_MISMATCHED_LEASE"],
+                    stop=False,
+                )
+            if lease.expired():
+                lease.active = False
+                return self._reject_aux_command(
+                    control_id=control_id,
+                    robot_id=robot_id,
+                    reasons=["LEASE_EXPIRED"],
+                    stop=True,
+                    lease=lease,
+                )
+            security = self._get_security_state()
+            if security.get("credential_status") != "ACTIVE":
+                lease.active = False
+                return self._reject_aux_command(
+                    control_id=control_id,
+                    robot_id=robot_id,
+                    reasons=["REVOKED_CREDENTIAL"],
+                    stop=True,
+                    lease=lease,
+                )
+            if security.get("agent_status") == "QUARANTINED":
+                lease.active = False
+                return self._reject_aux_command(
+                    control_id=control_id,
+                    robot_id=robot_id,
+                    reasons=["IDENTITY_QUARANTINED"],
+                    stop=True,
+                    lease=lease,
+                )
+        return None
+
+    def _reject_aux_command(
+        self,
+        *,
+        control_id: str,
+        robot_id: str,
+        reasons: list[str],
+        stop: bool,
+        lease: TeleopLease | None = None,
+    ) -> dict[str, Any]:
+        if stop:
+            if lease is not None:
+                lease.active = False
+            maybe_actuate_stop(robot_id)
+            if any(r in reasons for r in ("REVOKED_CREDENTIAL", "IDENTITY_QUARANTINED")):
+                self._apply_containment(
+                    robot_id,
+                    [
+                        "COMMAND_REJECTED",
+                        "CONTAINMENT_REQUESTED",
+                        "CREDENTIAL_REVOKED",
+                        "AGENT_QUARANTINED",
+                    ],
+                )
+        self._append_event(
+            {
+                "timestamp": _utcnow().isoformat(),
+                "kind": "teleop_aux_rejected",
+                "robot_id": robot_id,
+                "control_id": control_id,
+                "reasons": reasons,
+                "final_decision": "BLOCK",
+            }
+        )
+        return {
+            "status": "REJECTED",
+            "reasons": reasons,
+            "control_id": control_id,
+            "robot_id": robot_id,
+        }
+
+    def _aux_actuation_result(
+        self,
+        *,
+        control_id: str,
+        robot_id: str,
+        kind: str,
+        action: str,
+        actuation,
+        extra: dict[str, Any],
+    ) -> dict[str, Any]:
+        if actuation is None:
+            status = "EXECUTED"
+            command_id = f"mock-{uuid.uuid4()}"
+        elif not actuation.ok or actuation.stage == "FAILED":
+            maybe_actuate_stop(robot_id)
+            with self._lock:
+                lease = self._by_id.get(control_id)
+                if lease is not None:
+                    lease.active = False
+            return {
+                "status": "FAILED",
+                "reasons": ["BRIDGE_FAILURE"],
+                "detail": actuation.detail if actuation else None,
+                "control_id": control_id,
+                "robot_id": robot_id,
+                **extra,
+            }
+        else:
+            status = actuation.stage
+            command_id = actuation.command_id
+
+        self._append_event(
+            {
+                "timestamp": _utcnow().isoformat(),
+                "kind": f"teleop_{kind}",
+                "robot_id": robot_id,
+                "control_id": control_id,
+                "final_decision": "ALLOW",
+                "actions": [f"{action}_{status}"],
+                **extra,
+            }
+        )
+        return {
+            "status": status,
+            "command_id": command_id,
+            "control_id": control_id,
+            "robot_id": robot_id,
+            **extra,
         }
 
     def _deadman_loop(self) -> None:

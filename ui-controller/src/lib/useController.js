@@ -1,18 +1,35 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {useCallback, useEffect, useRef, useState} from "react";
 import {
-  DEADZONE, FALLBACK_TELEOP_CONFIG, LOOKAHEAD,
-  clamp, getEvents, getHealth, getState, getTeleopConfig, getTimeline,
-  padEstopPressed, padStickFor, readPosition, rejectionReasons, resetBackend,
-  speedFor, teleopMove, teleopStart, teleopStop, zoneAt,
-} from './omniguard.js';
+  DEADZONE,
+  FALLBACK_TELEOP_CONFIG,
+  LOOKAHEAD,
+  clamp,
+  getEvents,
+  getHealth,
+  getState,
+  getTeleopConfig,
+  getTimeline,
+  padEstopPressed,
+  padStickFor,
+  readPosition,
+  rejectionReasons,
+  resetBackend,
+  speedFor,
+  teleopArmPreset,
+  teleopGripper,
+  teleopMove,
+  teleopStart,
+  teleopStop,
+  zoneAt,
+} from "./omniguard.js";
 
-const PANEL_IDS = ['legit', 'rogue'];
+const PANEL_IDS = ["legit", "rogue"];
 const IDLE_POLL_MS = 1500;
 const ACTIVE_POLL_MS = 350;
 
-const blankStick = () => ({ vec: { x: 0, y: 0 }, mag: 0 });
+const blankStick = () => ({vec: {x: 0, y: 0}, mag: 0});
 const blankSession = () => ({
-  phase: 'idle',        // idle | starting | streaming | denied
+  phase: "idle", // idle | starting | streaming | denied
   controlId: null,
   expiresAt: 0,
   maxSpeed: null,
@@ -22,11 +39,19 @@ const blankSession = () => ({
   padActive: false,
 });
 const blankView = () => ({
-  lamp: 'idle', lampLabel: null, speed: 0, zone: null, setpoint: null,
-  reasons: [], log: [], lease: null, ai: null,
+  lamp: "idle",
+  lampLabel: null,
+  speed: 0,
+  zone: null,
+  setpoint: null,
+  reasons: [],
+  log: [],
+  lease: null,
+  ai: null,
 });
 
-const fromEntries = (fn) => Object.fromEntries(PANEL_IDS.map((id) => [id, fn(id)]));
+const fromEntries = (fn) =>
+  Object.fromEntries(PANEL_IDS.map((id) => [id, fn(id)]));
 let logSeq = 0;
 
 export function useController(cfg) {
@@ -41,19 +66,26 @@ export function useController(cfg) {
   const teleopRef = useRef(FALLBACK_TELEOP_CONFIG);
   teleopRef.current = teleopConfig;
 
-  const [options, setOptions] = useState({ overspeed: false });
+  const [options, setOptions] = useState({overspeed: false});
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
   const [view, setView] = useState(() => fromEntries(blankView));
-  const [world, setWorld] = useState({ robot: null, target: null, setpoints: [], trail: [] });
+  const [world, setWorld] = useState({
+    robot: null,
+    target: null,
+    setpoints: [],
+    trail: [],
+  });
   const [status, setStatus] = useState({});
   const [events, setEvents] = useState([]);
   const [timeline, setTimeline] = useState([]);
   const [health, setHealth] = useState(null);
-  const [padLabel, setPadLabel] = useState('Gamepad: checking…');
+  const [padLabel, setPadLabel] = useState("Gamepad: checking…");
   /* Mutable so the pad can drive the sticks at display rate without re-rendering. */
-  const padRef = useRef(fromEntries(() => ({ vec: { x: 0, y: 0 }, mag: 0, active: false })));
+  const padRef = useRef(
+    fromEntries(() => ({vec: {x: 0, y: 0}, mag: 0, active: false})),
+  );
   const estopRef = useRef(null);
   const [resetting, setResetting] = useState(false);
 
@@ -63,132 +95,195 @@ export function useController(cfg) {
   const trailRef = useRef([]);
 
   const patch = useCallback((id, next) => {
-    setView((prev) => ({ ...prev, [id]: { ...prev[id], ...next } }));
+    setView((prev) => ({...prev, [id]: {...prev[id], ...next}}));
   }, []);
 
   const pushLog = useCallback((id, decision, detail) => {
     setView((prev) => {
-      const log = [{
-        id: ++logSeq,
-        time: new Date().toLocaleTimeString([], { hour12: false }),
-        decision, detail,
-      }, ...prev[id].log].slice(0, 40);
-      return { ...prev, [id]: { ...prev[id], log } };
+      const log = [
+        {
+          id: ++logSeq,
+          time: new Date().toLocaleTimeString([], {hour12: false}),
+          decision,
+          detail,
+        },
+        ...prev[id].log,
+      ].slice(0, 40);
+      return {...prev, [id]: {...prev[id], log}};
     });
   }, []);
 
-  const setStick = useCallback((id, next) => { sticks.current[id] = next; }, []);
+  const setStick = useCallback((id, next) => {
+    sticks.current[id] = next;
+  }, []);
 
   /* --------------------------------------------------------------- config */
   useEffect(() => {
     let alive = true;
     getTeleopConfig(cfgRef.current)
-      .then((c) => { if (alive) { setTeleopConfig(c); setGatewayReady(true); } })
-      .catch(() => { if (alive) { setTeleopConfig(FALLBACK_TELEOP_CONFIG); setGatewayReady(false); } });
-    return () => { alive = false; };
+      .then((c) => {
+        if (alive) {
+          setTeleopConfig(c);
+          setGatewayReady(true);
+        }
+      })
+      .catch(() => {
+        if (alive) {
+          setTeleopConfig(FALLBACK_TELEOP_CONFIG);
+          setGatewayReady(false);
+        }
+      });
+    return () => {
+      alive = false;
+    };
   }, [cfg.api]);
 
   /* ---------------------------------------------------------------- stop */
-  const stopSession = useCallback(async (id, reason) => {
-    const s = sessions.current[id];
-    const controlId = s.controlId;
-    sessions.current[id] = blankSession();
-    patch(id, { lamp: 'idle', lampLabel: null, reasons: [], lease: null, speed: 0, zone: null, setpoint: null });
-    if (!controlId) return;
-    try {
-      await teleopStop(cfgRef.current, { controlId, reason });
-    } catch {
-      /* The backend deadman is the real guarantee; a failed stop call must not
-       * throw into the loop. */
-    }
-  }, [patch]);
+  const stopSession = useCallback(
+    async (id, reason) => {
+      const s = sessions.current[id];
+      const controlId = s.controlId;
+      sessions.current[id] = blankSession();
+      patch(id, {
+        lamp: "idle",
+        lampLabel: null,
+        reasons: [],
+        lease: null,
+        speed: 0,
+        zone: null,
+        setpoint: null,
+      });
+      if (!controlId) return;
+      try {
+        await teleopStop(cfgRef.current, {controlId, reason});
+      } catch {
+        /* The backend deadman is the real guarantee; a failed stop call must not
+         * throw into the loop. */
+      }
+    },
+    [patch],
+  );
 
   /* --------------------------------------------------------------- start */
-  const startSession = useCallback(async (id, point, speed) => {
-    const s = sessions.current[id];
-    s.phase = 'starting';
-    s.inflight = true;
-    patch(id, { lamp: 'idle', lampLabel: 'AUTHORIZING' });
-    try {
-      const res = await teleopStart(cfgRef.current, id, { ...point, speed });
-      const ai = res.ai ?? null;
-      if (res.final_decision === 'ALLOW' && res.control_id) {
-        sessions.current[id] = {
-          ...blankSession(),
-          phase: 'streaming',
-          controlId: res.control_id,
-          expiresAt: res.expires_at ? Date.parse(res.expires_at) : Date.now() + 30_000,
-          maxSpeed: res.max_speed ?? null,
-          allowedZones: res.allowed_zones ?? null,
-          sequence: 0,
-        };
+  const startSession = useCallback(
+    async (id, point, speed) => {
+      const s = sessions.current[id];
+      s.phase = "starting";
+      s.inflight = true;
+      patch(id, {lamp: "idle", lampLabel: "AUTHORIZING"});
+      try {
+        const res = await teleopStart(cfgRef.current, id, {...point, speed});
+        const ai = res.ai ?? null;
+        if (res.final_decision === "ALLOW" && res.control_id) {
+          sessions.current[id] = {
+            ...blankSession(),
+            phase: "streaming",
+            controlId: res.control_id,
+            expiresAt: res.expires_at
+              ? Date.parse(res.expires_at)
+              : Date.now() + 30_000,
+            maxSpeed: res.max_speed ?? null,
+            allowedZones: res.allowed_zones ?? null,
+            sequence: 0,
+          };
+          patch(id, {
+            lamp: "allow",
+            lampLabel: "LEASE ACTIVE",
+            reasons: [res.policy_decision].filter(Boolean),
+            lease: {
+              controlId: res.control_id,
+              expiresAt: res.expires_at,
+              maxSpeed: res.max_speed,
+              allowedZones: res.allowed_zones,
+            },
+            ai,
+          });
+          pushLog(id, "ALLOW", `lease issued · ${res.policy_decision ?? ""}`);
+        } else {
+          sessions.current[id] = {...blankSession(), phase: "denied"};
+          const hold = res.final_decision === "HOLD";
+          patch(id, {
+            lamp: hold ? "hold" : "block",
+            lampLabel: null,
+            reasons: res.reasons?.length
+              ? res.reasons
+              : [res.policy_decision].filter(Boolean),
+            lease: null,
+            ai,
+          });
+          pushLog(
+            id,
+            hold ? "HOLD" : "BLOCK",
+            (res.reasons ?? []).join(", ") || res.policy_decision || "",
+          );
+        }
+      } catch (err) {
+        sessions.current[id] = {...blankSession(), phase: "denied"};
+        const missing = err.status === 404;
         patch(id, {
-          lamp: 'allow', lampLabel: 'LEASE ACTIVE', reasons: [res.policy_decision].filter(Boolean),
-          lease: {
-            controlId: res.control_id, expiresAt: res.expires_at,
-            maxSpeed: res.max_speed, allowedZones: res.allowed_zones,
-          },
-          ai,
+          lamp: "block",
+          lampLabel: missing ? "GATEWAY MISSING" : "API ERROR",
+          reasons: [
+            missing ? "TELEOP_GATEWAY_NOT_DEPLOYED" : String(err.message),
+          ],
+          lease: null,
         });
-        pushLog(id, 'ALLOW', `lease issued · ${res.policy_decision ?? ''}`);
-      } else {
-        sessions.current[id] = { ...blankSession(), phase: 'denied' };
-        const hold = res.final_decision === 'HOLD';
-        patch(id, {
-          lamp: hold ? 'hold' : 'block', lampLabel: null,
-          reasons: res.reasons?.length ? res.reasons : [res.policy_decision].filter(Boolean),
-          lease: null, ai,
-        });
-        pushLog(id, hold ? 'HOLD' : 'BLOCK', (res.reasons ?? []).join(', ') || res.policy_decision || '');
+        pushLog(id, "ERROR", String(err.message));
+      } finally {
+        sessions.current[id].inflight = false;
       }
-    } catch (err) {
-      sessions.current[id] = { ...blankSession(), phase: 'denied' };
-      const missing = err.status === 404;
-      patch(id, {
-        lamp: 'block',
-        lampLabel: missing ? 'GATEWAY MISSING' : 'API ERROR',
-        reasons: [missing ? 'TELEOP_GATEWAY_NOT_DEPLOYED' : String(err.message)],
-        lease: null,
-      });
-      pushLog(id, 'ERROR', String(err.message));
-    } finally {
-      sessions.current[id].inflight = false;
-    }
-  }, [patch, pushLog]);
+    },
+    [patch, pushLog],
+  );
 
   /* ---------------------------------------------------------------- move */
-  const sendPacket = useCallback(async (id, point, speed) => {
-    const s = sessions.current[id];
-    s.inflight = true;
-    s.sequence += 1;                         // strictly increasing per session
-    const sequence = s.sequence;
-    try {
-      const res = await teleopMove(cfgRef.current, {
-        controlId: s.controlId, sequence, x: point.x, y: point.y, speed,
-      });
-      if (res?.status && res.status !== 'EXECUTED' && res.status !== 'QUEUED') {
-        const reasons = rejectionReasons(res);
-        const label = reasons.join(', ') || res.status;
-        pushLog(id, 'BLOCK', label);
-        patch(id, { lamp: 'block', lampLabel: res.status, reasons: reasons.length ? reasons : [res.status] });
-        await stopSession(id, 'REJECTED_BY_BACKEND');
+  const sendPacket = useCallback(
+    async (id, point, speed) => {
+      const s = sessions.current[id];
+      s.inflight = true;
+      s.sequence += 1; // strictly increasing per session
+      const sequence = s.sequence;
+      try {
+        const res = await teleopMove(cfgRef.current, {
+          controlId: s.controlId,
+          sequence,
+          x: point.x,
+          y: point.y,
+          speed,
+        });
+        if (
+          res?.status &&
+          res.status !== "EXECUTED" &&
+          res.status !== "QUEUED"
+        ) {
+          const reasons = rejectionReasons(res);
+          const label = reasons.join(", ") || res.status;
+          pushLog(id, "BLOCK", label);
+          patch(id, {
+            lamp: "block",
+            lampLabel: res.status,
+            reasons: reasons.length ? reasons : [res.status],
+          });
+          await stopSession(id, "REJECTED_BY_BACKEND");
+        }
+      } catch (err) {
+        /* Fail closed: any rejected packet ends the session immediately. */
+        const fromBody = rejectionReasons(err.body);
+        const reasons = fromBody.length ? fromBody : [String(err.message)];
+        patch(id, {
+          lamp: "block",
+          lampLabel: err.status === 409 ? "LEASE INVALID" : "REJECTED",
+          reasons,
+        });
+        pushLog(id, "BLOCK", reasons.join(", "));
+        await stopSession(id, "REJECTED_BY_BACKEND");
+      } finally {
+        const cur = sessions.current[id];
+        if (cur) cur.inflight = false;
       }
-    } catch (err) {
-      /* Fail closed: any rejected packet ends the session immediately. */
-      const fromBody = rejectionReasons(err.body);
-      const reasons = fromBody.length ? fromBody : [String(err.message)];
-      patch(id, {
-        lamp: 'block',
-        lampLabel: err.status === 409 ? 'LEASE INVALID' : 'REJECTED',
-        reasons,
-      });
-      pushLog(id, 'BLOCK', reasons.join(', '));
-      await stopSession(id, 'REJECTED_BY_BACKEND');
-    } finally {
-      const cur = sessions.current[id];
-      if (cur) cur.inflight = false;
-    }
-  }, [patch, pushLog, stopSession]);
+    },
+    [patch, pushLog, stopSession],
+  );
 
   /* ------------------------------------------------------------- gamepad
    * Sampled on requestAnimationFrame (display rate), NOT on the send tick.
@@ -202,7 +297,7 @@ export function useController(cfg) {
    */
   useEffect(() => {
     if (!navigator.getGamepads) {
-      setPadLabel('Gamepad: needs https or 127.0.0.1');
+      setPadLabel("Gamepad: needs https or 127.0.0.1");
       return undefined;
     }
 
@@ -218,10 +313,10 @@ export function useController(cfg) {
           lastId = null;
           /* Chrome exposes nothing until the pad sends input, so "none" is not
            * the same as "not plugged in". Say what actually unblocks it. */
-          setPadLabel('Gamepad: press any button to connect');
+          setPadLabel("Gamepad: press any button to connect");
           for (const id of PANEL_IDS) {
             if (padRef.current[id].active) {
-              padRef.current[id] = { vec: { x: 0, y: 0 }, mag: 0, active: false };
+              padRef.current[id] = {vec: {x: 0, y: 0}, mag: 0, active: false};
               sticks.current[id] = blankStick();
             }
           }
@@ -232,8 +327,10 @@ export function useController(cfg) {
 
       if (pad.index !== lastId) {
         lastId = pad.index;
-        const nonStandard = pad.mapping !== 'standard';
-        setPadLabel(`Gamepad: ${pad.id.slice(0, 28)}${nonStandard ? ' (non-standard mapping)' : ''}`);
+        const nonStandard = pad.mapping !== "standard";
+        setPadLabel(
+          `Gamepad: ${pad.id.slice(0, 28)}${nonStandard ? " (non-standard mapping)" : ""}`,
+        );
       }
 
       PANEL_IDS.forEach((id, i) => {
@@ -241,7 +338,7 @@ export function useController(cfg) {
         const slot = padRef.current[id];
         if (next.active) {
           padRef.current[id] = next;
-          sticks.current[id] = { vec: next.vec, mag: next.mag };
+          sticks.current[id] = {vec: next.vec, mag: next.mag};
         } else if (slot.active) {
           /* Released: publish an explicit zero so the thumb springs back.
            * Publishing null here is what used to leave it stuck deflected. */
@@ -253,7 +350,7 @@ export function useController(cfg) {
       const estop = padEstopPressed(pad);
       if (estop && !estopWasDown) {
         for (const id of PANEL_IDS) {
-          padRef.current[id] = { vec: { x: 0, y: 0 }, mag: 0, active: false };
+          padRef.current[id] = {vec: {x: 0, y: 0}, mag: 0, active: false};
           sticks.current[id] = blankStick();
         }
         estopRef.current?.();
@@ -282,18 +379,21 @@ export function useController(cfg) {
         const s = sessions.current[id];
 
         if (stick.mag <= DEADZONE) {
-          if (s.phase === 'streaming' || s.phase === 'starting') stopSession(id, 'JOYSTICK_RELEASED');
-          else if (s.phase === 'denied') { /* keep the verdict on screen until re-grab */ }
+          if (s.phase === "streaming" || s.phase === "starting")
+            stopSession(id, "JOYSTICK_RELEASED");
+          else if (s.phase === "denied") {
+            /* keep the verdict on screen until re-grab */
+          }
           continue;
         }
 
-        const overspeed = id === 'rogue' && optionsRef.current.overspeed;
-        const speed = speedFor(stick.mag, { maxSpeed, overspeed });
+        const overspeed = id === "rogue" && optionsRef.current.overspeed;
+        const speed = speedFor(stick.mag, {maxSpeed, overspeed});
 
         /* Without a real pose we cannot compute a setpoint honestly. */
         const base = robotRef.current;
         if (!base) {
-          patch(id, { speed, zone: null, setpoint: null });
+          patch(id, {speed, zone: null, setpoint: null});
           continue;
         }
 
@@ -304,18 +404,24 @@ export function useController(cfg) {
           y: base.y + (stick.vec.y / len) * LOOKAHEAD,
         };
         if (bounds) {
-          sp = { x: clamp(sp.x, bounds[0], bounds[2]), y: clamp(sp.y, bounds[1], bounds[3]) };
+          sp = {
+            x: clamp(sp.x, bounds[0], bounds[2]),
+            y: clamp(sp.y, bounds[1], bounds[3]),
+          };
         }
-        setpoints.push({ id, sp });
-        patch(id, { speed, zone: zoneAt(sp.x, sp.y, conf.zones), setpoint: sp });
+        setpoints.push({id, sp});
+        patch(id, {speed, zone: zoneAt(sp.x, sp.y, conf.zones), setpoint: sp});
 
         if (s.inflight) continue;
 
-        if (s.phase === 'idle') { startSession(id, sp, speed); continue; }
-        if (s.phase === 'streaming') {
+        if (s.phase === "idle") {
+          startSession(id, sp, speed);
+          continue;
+        }
+        if (s.phase === "streaming") {
           if (Date.now() >= s.expiresAt) {
             /* Lease aged out mid-hold: re-authorize rather than keep streaming. */
-            pushLog(id, 'HOLD', 'lease expired — re-authorizing');
+            pushLog(id, "HOLD", "lease expired — re-authorizing");
             sessions.current[id] = blankSession();
             startSession(id, sp, speed);
             continue;
@@ -324,7 +430,7 @@ export function useController(cfg) {
         }
       }
 
-      setWorld((prev) => ({ ...prev, setpoints }));
+      setWorld((prev) => ({...prev, setpoints}));
     };
 
     const handle = setInterval(tick, tickMs);
@@ -351,41 +457,59 @@ export function useController(cfg) {
         }
         if (alive) {
           setStatus({
-            robot_status: s.robot_status, robot_zone: s.robot_zone,
-            credential_status: s.credential_status, agent_status: s.agent_status,
-            robot_speed: s.robot_speed, protection_enabled: s.protection_enabled,
+            robot_status: s.robot_status,
+            robot_zone: s.robot_zone,
+            credential_status: s.credential_status,
+            agent_status: s.agent_status,
+            robot_speed: s.robot_speed,
+            protection_enabled: s.protection_enabled,
             last_containment_ack: s.last_containment_ack,
-            bridge, online: true,
+            bridge,
+            online: true,
           });
           setWorld((prev) => ({
             ...prev,
             robot: pos,
-            target: readPosition({ position: bridge?.target }),
+            target: readPosition({position: bridge?.target}),
             trail: trailRef.current,
           }));
         }
       } catch {
-        if (alive) setStatus((prev) => ({ ...prev, online: false, robot_status: 'API DOWN' }));
+        if (alive)
+          setStatus((prev) => ({
+            ...prev,
+            online: false,
+            robot_status: "API DOWN",
+          }));
       }
 
       const [ev, tl] = await Promise.allSettled([getEvents(c), getTimeline(c)]);
       if (!alive) return;
-      if (ev.status === 'fulfilled') setEvents(ev.value.slice(0, 12));
-      if (tl.status === 'fulfilled') setTimeline(tl.value);
+      if (ev.status === "fulfilled") setEvents(ev.value.slice(0, 12));
+      if (tl.status === "fulfilled") setTimeline(tl.value);
 
-      const active = PANEL_IDS.some((id) => sessions.current[id].phase === 'streaming');
+      const active = PANEL_IDS.some(
+        (id) => sessions.current[id].phase === "streaming",
+      );
       handle = setTimeout(poll, active ? ACTIVE_POLL_MS : IDLE_POLL_MS);
     };
 
     poll();
-    return () => { alive = false; clearTimeout(handle); };
+    return () => {
+      alive = false;
+      clearTimeout(handle);
+    };
   }, [cfg.api]);
 
   /* --------------------------------------------------------------- health */
   useEffect(() => {
     let alive = true;
-    getHealth(cfgRef.current).then((h) => alive && setHealth(h)).catch(() => alive && setHealth(null));
-    return () => { alive = false; };
+    getHealth(cfgRef.current)
+      .then((h) => alive && setHealth(h))
+      .catch(() => alive && setHealth(null));
+    return () => {
+      alive = false;
+    };
   }, [cfg.api]);
 
   /* --------------------------------------------------------------- deadman
@@ -395,20 +519,22 @@ export function useController(cfg) {
     const halt = (reason) => {
       for (const id of PANEL_IDS) {
         sticks.current[id] = blankStick();
-        if (sessions.current[id].phase !== 'idle') stopSession(id, reason);
+        if (sessions.current[id].phase !== "idle") stopSession(id, reason);
       }
     };
-    const onVisibility = () => { if (document.hidden) halt('PAGE_HIDDEN'); };
-    const onBlur = () => halt('WINDOW_BLUR');
-    const onHide = () => halt('PAGE_HIDE');
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('blur', onBlur);
-    window.addEventListener('pagehide', onHide);
+    const onVisibility = () => {
+      if (document.hidden) halt("PAGE_HIDDEN");
+    };
+    const onBlur = () => halt("WINDOW_BLUR");
+    const onHide = () => halt("PAGE_HIDE");
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("pagehide", onHide);
     return () => {
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('blur', onBlur);
-      window.removeEventListener('pagehide', onHide);
-      halt('COMPONENT_UNMOUNTED');
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("pagehide", onHide);
+      halt("COMPONENT_UNMOUNTED");
     };
   }, [stopSession]);
 
@@ -417,10 +543,13 @@ export function useController(cfg) {
   useEffect(() => {
     estopRef.current = () => {
       for (const id of PANEL_IDS) {
-        if (sessions.current[id].phase !== 'idle') stopSession(id, 'GAMEPAD_EMERGENCY_STOP');
+        if (sessions.current[id].phase !== "idle")
+          stopSession(id, "GAMEPAD_EMERGENCY_STOP");
       }
     };
-    return () => { estopRef.current = null; };
+    return () => {
+      estopRef.current = null;
+    };
   }, [stopSession]);
 
   /* ---------------------------------------------------------------- reset */
@@ -428,24 +557,98 @@ export function useController(cfg) {
     setResetting(true);
     for (const id of PANEL_IDS) {
       sticks.current[id] = blankStick();
-      if (sessions.current[id].phase !== 'idle') await stopSession(id, 'DEMO_RESET');
+      if (sessions.current[id].phase !== "idle")
+        await stopSession(id, "DEMO_RESET");
       sessions.current[id] = blankSession();
     }
-    setOptions({ overspeed: false });
+    setOptions({overspeed: false});
     setView(fromEntries(blankView));
-    try { await resetBackend(cfgRef.current); } catch { /* surfaced by the poll */ }
+    try {
+      await resetBackend(cfgRef.current);
+    } catch {
+      /* surfaced by the poll */
+    }
     /* Security state is reset; physical position is NOT invented — the next
      * poll reports wherever Isaac actually left the robot. */
     trailRef.current = [];
     setEvents([]);
     setTimeline([]);
-    setWorld((prev) => ({ ...prev, trail: [], setpoints: [] }));
+    setWorld((prev) => ({...prev, trail: [], setpoints: []}));
     setResetting(false);
   }, [stopSession]);
 
+  /* -------------------------------------------------------------- arm/grip */
+  const handleLeaseCommand = useCallback(
+    async (id, label, invoke) => {
+      const controlId = sessions.current[id]?.controlId;
+      if (!controlId) {
+        const reasons = ["NO_ACTIVE_TELEOP_LEASE"];
+        patch(id, {lamp: "block", lampLabel: "NO LEASE", reasons});
+        pushLog(id, "BLOCK", reasons[0]);
+        return;
+      }
+
+      try {
+        const res = await invoke(controlId);
+        if (res?.status && !["EXECUTED", "QUEUED"].includes(res.status)) {
+          const reasons = rejectionReasons(res);
+          const detail = reasons.join(", ") || res.status;
+          sessions.current[id] = blankSession();
+          patch(id, {
+            lamp: "block",
+            lampLabel: res.status,
+            reasons,
+            lease: null,
+          });
+          pushLog(id, "BLOCK", detail);
+          return;
+        }
+        const status = res?.status ?? "QUEUED";
+        pushLog(id, "ALLOW", `${label} ${status.toLowerCase()}`);
+      } catch (err) {
+        const fromBody = rejectionReasons(err.body);
+        const reasons = fromBody.length ? fromBody : [String(err.message)];
+        sessions.current[id] = blankSession();
+        patch(id, {lamp: "block", lampLabel: "REJECTED", reasons, lease: null});
+        pushLog(id, "BLOCK", reasons.join(", "));
+      }
+    },
+    [patch, pushLog],
+  );
+
+  const sendArmPreset = useCallback(
+    (id, preset) =>
+      handleLeaseCommand(id, `ARM ${preset}`, (controlId) =>
+        teleopArmPreset(cfgRef.current, {controlId, preset}),
+      ),
+    [handleLeaseCommand],
+  );
+
+  const sendGripper = useCallback(
+    (id, action) =>
+      handleLeaseCommand(id, `GRIPPER ${action}`, (controlId) =>
+        teleopGripper(cfgRef.current, {controlId, action}),
+      ),
+    [handleLeaseCommand],
+  );
+
   return {
-    view, world, status, events, timeline, health,
-    teleopConfig, gatewayReady,
-    options, setOptions, setStick, padRef, padLabel, reset, resetting,
+    view,
+    world,
+    status,
+    events,
+    timeline,
+    health,
+    teleopConfig,
+    gatewayReady,
+    options,
+    setOptions,
+    setStick,
+    padRef,
+    padLabel,
+    reset,
+    resetting,
+    sendArmPreset,
+    sendGripper,
   };
 }
