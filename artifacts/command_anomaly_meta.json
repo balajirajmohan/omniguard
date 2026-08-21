@@ -1,0 +1,59 @@
+{
+  "model_name": "IsolationForest",
+  "model_version": "iforest-v1",
+  "feature_names": [
+    "speed",
+    "known_device",
+    "restricted_destination",
+    "commands_last_10_seconds",
+    "previous_failures",
+    "hour_of_day",
+    "seconds_since_last_command"
+  ],
+  "trained_on": "synthetic_normal_commands_only",
+  "n_training_samples": 5000,
+  "contamination": 0.03,
+  "random_state": 42,
+  "trained_at": "2026-08-21T17:21:01.292538+00:00",
+  "critical_risk_threshold": 0.8,
+  "warning_risk_threshold": 0.6,
+  "eval_recall_at_critical_or_predict": 1.0,
+  "eval_results": [
+    {
+      "scenario": "eval_normal",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.25,
+      "raw_score": 0.09308674265860106
+    },
+    {
+      "scenario": "known_compromise",
+      "label": 1,
+      "predicted_anomaly": true,
+      "risk": 0.91,
+      "raw_score": -0.04289151636402122
+    },
+    {
+      "scenario": "behavioral_anomaly",
+      "label": 1,
+      "predicted_anomaly": true,
+      "risk": 0.91,
+      "raw_score": -0.04289151636402122
+    },
+    {
+      "scenario": "behavioral_anomaly_alt",
+      "label": 1,
+      "predicted_anomaly": true,
+      "risk": 0.91,
+      "raw_score": -0.04289151636402122
+    },
+    {
+      "scenario": "off_hours_burst",
+      "label": 1,
+      "predicted_anomaly": true,
+      "risk": 0.93,
+      "raw_score": -0.05134110338030595
+    }
+  ],
+  "judge_note": "Unsupervised model trained only on normal operations. Attack labels evaluate and demonstrate detection; they are not used to teach every possible attack."
+}

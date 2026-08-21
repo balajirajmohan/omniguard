@@ -113,9 +113,24 @@ BROKER_URL=http://127.0.0.1:8001 python scripts/attack_client.py
 ```text
 Protection OFF              -> ALLOW (unsafe comparison for judges)
 Hard policy violation       -> BLOCK + contain
-AI risk >= 0.80             -> BLOCK + contain
+AI risk >= 0.80             -> BLOCK + contain (unknown behavioral threat)
 AI risk 0.60–0.79           -> HOLD
 AI risk < 0.60              -> ALLOW
+OMNIGUARD_AI_ENFORCE=false  -> AI scores in shadow mode (no block)
+```
+
+### Judge AI narrative (rules vs ML)
+
+1. **Learn normal** — IsolationForest trained only on synthetic normal fleet commands (`scripts/generate_training_data.py` + `scripts/train_anomaly_model.py`).
+2. **Normal** — rules pass, low AI risk → ALLOW.
+3. **Known compromise** — rogue device / restricted zone / excessive speed → hard policy DENY (AI also high).
+4. **Unknown anomaly** — valid token, known device, allowed zone, speed under max → rules would allow; AI risk blocks (`/api/demo/anomaly`).
+
+> Rules stop known unsafe actions. AI learns normal fleet behavior and surfaces attacks we did not pre-program. An LLM may explain afterward; it never moves the robot.
+
+```bash
+python scripts/generate_training_data.py
+python scripts/train_anomaly_model.py
 ```
 
 ## Repo layout

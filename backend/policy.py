@@ -28,6 +28,13 @@ HARD_VIOLATIONS = {
     "EXCESSIVE_SPEED",
 }
 
+# When false, AI scores but does not block (shadow mode).
+AI_ENFORCE = os.getenv("OMNIGUARD_AI_ENFORCE", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+
 
 def collect_reasons(
     *,
@@ -96,6 +103,16 @@ def decide(
         }
 
     if risk >= 0.80:
+        if not AI_ENFORCE:
+            return {
+                "final_decision": "ALLOW",
+                "policy_decision": "AI_SHADOW_ALERT",
+                "actions": [
+                    "COMMAND_FORWARDED",
+                    "AI_ANOMALY_DETECTED_SHADOW",
+                ],
+                "contain": False,
+            }
         return {
             "final_decision": "BLOCK",
             "policy_decision": "REVIEW_AI_RISK",
@@ -104,6 +121,7 @@ def decide(
                 "ROBOT_STOPPED",
                 "CREDENTIAL_REVOKED",
                 "AGENT_QUARANTINED",
+                "AI_ANOMALY_CONTAINMENT",
             ],
             "contain": True,
         }
@@ -112,7 +130,7 @@ def decide(
         return {
             "final_decision": "HOLD",
             "policy_decision": "HOLD_FOR_REVIEW",
-            "actions": ["COMMAND_HELD", "OPERATOR_REVIEW_REQUIRED"],
+            "actions": ["COMMAND_HELD", "OPERATOR_REVIEW_REQUIRED", "AI_WARNING"],
             "contain": False,
         }
 
