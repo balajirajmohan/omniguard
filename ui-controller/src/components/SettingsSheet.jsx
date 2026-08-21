@@ -43,8 +43,8 @@ export default function SettingsSheet({ cfg, onSave, onClose }) {
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <p className="text-[11.5px] text-faint">
-          Stored in this browser only. The fleet credential is held in memory for this tab and is
-          never written to localStorage.
+          Stored in this browser only. The fleet credential and demo operator token stay in memory
+          for this tab and are never written to localStorage.
         </p>
         <button onClick={save} className="btn btn-primary"><Save size={14} aria-hidden="true" />Save</button>
       </div>

@@ -8,7 +8,9 @@ import SettingsSheet from './components/SettingsSheet.jsx';
 import TelemetryRail from './components/TelemetryRail.jsx';
 import TopBar from './components/TopBar.jsx';
 import WarehouseMap from './components/WarehouseMap.jsx';
-import { loadConfig, saveConfig } from './lib/omniguard.js';
+import {
+  DEMO_CREDENTIAL, DEMO_OPERATOR_TOKEN, loadConfig, saveConfig,
+} from './lib/omniguard.js';
 import { useController } from './lib/useController.js';
 
 export default function App() {
@@ -27,8 +29,14 @@ export default function App() {
   }, [ctl.events, scenarioResult]);
 
   const onSave = useCallback((next) => {
-    setCfg(next);
-    saveConfig(next);
+    /* Secrets stay in React memory only — never rely on settings draft/localStorage. */
+    const secured = {
+      ...next,
+      credential: DEMO_CREDENTIAL,
+      operatorToken: DEMO_OPERATOR_TOKEN,
+    };
+    setCfg(secured);
+    saveConfig(secured);
     setShowSettings(false);
   }, []);
 
