@@ -45,17 +45,35 @@ def get(path: str, default):
 
 health = get("/health", {})
 llm = health.get("llm") or {}
-health_cols = st.columns(4)
+anomaly = health.get("anomaly") or {}
+health_cols = st.columns(5)
 health_cols[0].metric("API", health.get("status", "down").upper())
 health_cols[1].metric("Robot backend", str(health.get("robot_backend", "unknown")).upper())
-health_cols[2].metric("LLM provider", str(llm.get("provider", "fallback")).upper())
-health_cols[3].metric(
-    "LLM configured",
-    "YES" if llm.get("configured") else "NO (fallback)",
+health_cols[2].metric(
+    "AI model",
+    "READY" if anomaly.get("available") else "UNAVAILABLE",
+)
+health_cols[3].metric("LLM provider", str(llm.get("provider", "fallback")).upper())
+health_cols[4].metric(
+    "Train samples",
+    str(anomaly.get("n_training_samples") or "—"),
 )
 
-st.subheader("Judge demo — four-button flow")
-button_columns = st.columns(4)
+with st.expander("AI anomaly model (IsolationForest)", expanded=False):
+    st.write(
+        f"**{anomaly.get('model_name', 'IsolationForest')}** · "
+        f"version `{anomaly.get('model_version', 'n/a')}` · "
+        f"{'degraded inline fit' if anomaly.get('degraded') else 'artifact loaded'}"
+    )
+    st.caption(anomaly.get("judge_note", ""))
+    st.write("Features:", ", ".join(anomaly.get("feature_names") or []))
+    st.write(
+        f"Critical ≥ {anomaly.get('critical_threshold', 0.8)} · "
+        f"Warning ≥ {anomaly.get('warning_threshold', 0.6)}"
+    )
+
+st.subheader("Judge demo")
+button_columns = st.columns(5)
 with button_columns[0]:
     if st.button("Reset Demo", use_container_width=True):
         post("/api/reset")
@@ -72,6 +90,14 @@ with button_columns[3]:
     if st.button("Attack - OmniGuard ON", use_container_width=True):
         post("/api/demo/attack?protection=true")
         st.rerun()
+with button_columns[4]:
+    if st.button("AI-only anomaly", use_container_width=True):
+        post("/api/demo/anomaly")
+        st.rerun()
+st.caption(
+    "AI-only anomaly: valid token + known device + allowed zone + speed under max — "
+    "hard rules pass; IsolationForest risk triggers containment."
+)
 
 st.subheader("Scenario library")
 scenarios = get("/api/scenarios", [])
@@ -133,11 +159,22 @@ if events:
         else:
             st.success("COMMAND ALLOWED")
         st.metric("AI anomaly risk", latest.get("anomaly_risk_score", 0.0))
+        caught = latest.get("caught_by", "none")
+        if caught == "ai_anomaly":
+            st.warning("Caught by AI (hard policy would ALLOW)")
+        elif caught == "hard_policy":
+            st.info("Caught by hard policy (AI may also score high)")
         st.write("Policy:", latest.get("policy_decision"))
-        st.write("Reasons:", ", ".join(latest.get("reasons", [])) or "None")
+        st.write("Reasons:", ", ".join(latest.get("reasons", [])) or "None (rules passed)")
+        st.write(
+            "AI anomalous:",
+            latest.get("ai_anomalous"),
+            "· model",
+            latest.get("anomaly_model_version"),
+        )
         features = latest.get("anomaly_features") or {}
         if features:
-            st.write("Anomaly features:", features)
+            st.write("Why AI evaluated:", features)
     with right:
         st.subheader("Ordered response")
         for action in latest.get("actions", []):
@@ -177,6 +214,7 @@ if events:
                 "AI risk": event.get("anomaly_risk_score"),
                 "policy": event.get("policy_decision"),
                 "decision": event.get("final_decision"),
+                "caught_by": event.get("caught_by"),
                 "actions": ", ".join(event.get("actions", [])),
             }
         )

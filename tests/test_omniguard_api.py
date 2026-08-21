@@ -6,11 +6,27 @@ client = TestClient(app)
 SIM_HEADERS = {"X-OmniGuard-Simulator": SIMULATOR_TOKEN}
 
 
+def test_ai_only_anomaly_blocks_when_rules_pass():
+    """Valid identity/device/zone/speed — IsolationForest must catch it."""
+    client.post("/api/reset")
+    result = client.post("/api/demo/anomaly").json()
+    assert result["final_decision"] == "BLOCK"
+    assert result["hard_policy_would_block"] is False
+    assert result["caught_by"] == "ai_anomaly"
+    assert result["policy_decision"] == "REVIEW_AI_RISK"
+    assert result["anomaly_risk_score"] >= 0.80
+    assert "AI_ANOMALY_CONTAINMENT" in result["actions"]
+    assert result.get("anomaly_model_version")
+
+
 def test_health():
     payload = client.get("/health").json()
     assert payload["status"] == "ok"
     assert "llm" in payload
     assert payload["llm"]["controls_robot"] is False
+    assert "anomaly" in payload
+    assert payload["anomaly"]["controls_robot"] is False
+    assert payload["anomaly"]["model_name"] == "IsolationForest"
 
 
 def test_scenario_catalog_and_combined_attack():

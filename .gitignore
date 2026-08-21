@@ -16,6 +16,10 @@ OmniGuard_Starter_Kit*/
 OmniGuard_*Handoff*.pdf
 OmniGuard_*.pdf
 
+# Generated training CSVs (regenerate with scripts/generate_training_data.py)
+data/normal_commands.csv
+data/eval_commands.csv
+
 # Terraform
 infra/.terraform/
 infra/*.tfstate

@@ -57,6 +57,7 @@ def initial_state() -> dict[str, Any]:
         "events": [],
         "command_queue": [{"action": "RESET"}],
         "last_containment_ack": None,
+        "last_command_at": None,
     }
 
 
@@ -72,6 +73,8 @@ class CommandRequest(BaseModel):
     speed: float = Field(ge=0, le=10)
     commands_last_10_seconds: int = 1
     previous_failures: int = 0
+    hour_of_day: int | None = Field(default=None, ge=0, le=23)
+    seconds_since_last_command: float | None = Field(default=None, ge=0)
     protection_enabled: bool = True
 
 
@@ -113,12 +116,31 @@ def evaluate(command: CommandRequest) -> dict[str, Any]:
     with _LOCK:
         known_device = command.device_id == KNOWN_DEVICE
         restricted = command.destination not in SAFE_ZONES
-        risk, features = detector.score(
+        now_dt = datetime.now(timezone.utc)
+        hour = (
+            command.hour_of_day
+            if command.hour_of_day is not None
+            else now_dt.hour
+        )
+        if command.seconds_since_last_command is not None:
+            gap = float(command.seconds_since_last_command)
+        elif STATE.get("last_command_at"):
+            try:
+                prev = datetime.fromisoformat(STATE["last_command_at"])
+                gap = max(0.0, (now_dt - prev).total_seconds())
+            except ValueError:
+                gap = 30.0
+        else:
+            gap = 30.0
+
+        risk, features, ai_info = detector.score(
             speed=command.speed,
             known_device=known_device,
             restricted_destination=restricted,
             commands_last_10_seconds=command.commands_last_10_seconds,
             previous_failures=command.previous_failures,
+            hour_of_day=hour,
+            seconds_since_last_command=gap,
         )
 
         reasons = collect_reasons(
@@ -129,6 +151,18 @@ def evaluate(command: CommandRequest) -> dict[str, Any]:
             robot_id=command.robot_id,
             destination=command.destination,
             speed=command.speed,
+        )
+        hard_policy_would_block = any(
+            r in {
+                "INVALID_CREDENTIAL",
+                "REVOKED_CREDENTIAL",
+                "UNAUTHORIZED_AGENT",
+                "UNAUTHORIZED_ROBOT",
+                "UNKNOWN_DEVICE",
+                "RESTRICTED_DESTINATION",
+                "EXCESSIVE_SPEED",
+            }
+            for r in reasons
         )
 
         STATE["protection_enabled"] = command.protection_enabled
@@ -190,16 +224,31 @@ def evaluate(command: CommandRequest) -> dict[str, Any]:
             "speed": command.speed,
             "credential_valid": command.credential == VALID_TOKEN,
             "policy_decision": outcome["policy_decision"],
-            "anomaly_model": "IsolationForest",
+            "hard_policy_would_block": hard_policy_would_block,
+            "anomaly_model": ai_info.get("model_name", "IsolationForest"),
+            "anomaly_model_version": ai_info.get("model_version"),
             "anomaly_risk_score": risk,
+            "ai_anomalous": ai_info.get("ai_anomalous", False),
+            "ai_unavailable": ai_info.get("ai_unavailable", False),
             "anomaly_features": features,
+            "anomaly_info": ai_info,
             "final_decision": decision,
             "reasons": reasons,
             "actions": actions,
             "containment_actions": actions if outcome["contain"] else [],
+            "caught_by": (
+                "hard_policy"
+                if hard_policy_would_block and decision == "BLOCK"
+                else (
+                    "ai_anomaly"
+                    if decision == "BLOCK" and not hard_policy_would_block
+                    else "none"
+                )
+            ),
         }
         if decision == "BLOCK":
             event["incident_explanation"] = explain_incident(event)
+        STATE["last_command_at"] = event["timestamp"]
         STATE["events"].insert(0, event)
         STATE["events"] = STATE["events"][:100]
         return event
@@ -214,6 +263,7 @@ def health() -> dict[str, Any]:
         "robot_backend": os.getenv("OMNIGUARD_ROBOT_BACKEND", "mock"),
         "isaac_bridge_url": os.getenv("ISAAC_BRIDGE_URL", "http://127.0.0.1:8899"),
         "llm": llm_status(),
+        "anomaly": detector.status(),
     }
 
 
@@ -262,6 +312,8 @@ def run_scenario(
             speed=scenario["speed"],
             commands_last_10_seconds=scenario["commands_last_10_seconds"],
             previous_failures=scenario["previous_failures"],
+            hour_of_day=scenario.get("hour_of_day"),
+            seconds_since_last_command=scenario.get("seconds_since_last_command"),
             protection_enabled=protection,
         )
     )
@@ -303,6 +355,25 @@ def demo_attack(protection: bool = Query(default=True)) -> dict[str, Any]:
             commands_last_10_seconds=8,
             previous_failures=3,
             protection_enabled=protection,
+        )
+    )
+
+
+@app.post("/api/demo/anomaly")
+def demo_anomaly() -> dict[str, Any]:
+    """Rule-passing command that IsolationForest should block (unknown threat)."""
+    reset_state()
+    return evaluate(
+        CommandRequest(
+            credential=VALID_TOKEN,
+            device_id=KNOWN_DEVICE,
+            destination="SAFE_ZONE_B",
+            speed=1.45,
+            commands_last_10_seconds=10,
+            previous_failures=4,
+            hour_of_day=3,
+            seconds_since_last_command=1.5,
+            protection_enabled=True,
         )
     )
 
