@@ -66,12 +66,90 @@ describe('security boundary', () => {
     expect(localStorage.getItem('omniguard.cfg')).not.toContain('super-secret');
   });
 
+  it('never persists the demo operator token', () => {
+    OG.saveConfig({
+      api: 'http://x',
+      robot: 'robot-01',
+      credential: OG.DEMO_CREDENTIAL,
+      operatorToken: 'should-not-persist',
+    });
+    const raw = localStorage.getItem('omniguard.cfg');
+    expect(raw).not.toContain('should-not-persist');
+    expect(raw).not.toContain('operatorToken');
+    expect(OG.loadConfig().operatorToken).toBe(OG.DEMO_OPERATOR_TOKEN);
+  });
+
   it('ignores a credential or bridge left behind by an older build', () => {
     localStorage.setItem('omniguard.cfg',
       JSON.stringify({ api: 'http://x', credential: 'stale', bridge: 'http://h:8899' }));
     const loaded = OG.loadConfig();
     expect(loaded.bridge).toBeUndefined();
     expect(loaded.credential).toBe(OG.DEMO_CREDENTIAL);
+  });
+});
+
+describe('protection OFF operator authorization', () => {
+  const cfgWithOp = {
+    ...cfg,
+    operatorToken: OG.DEMO_OPERATOR_TOKEN,
+  };
+
+  it('sends X-OmniGuard-Operator only when protection=false', async () => {
+    const spy = mockFetch({ body: { final_decision: 'ALLOW', policy_decision: 'BYPASSED' } });
+    await OG.runScenario(cfgWithOp, 'rogue_device', { protection: false, resetFirst: true });
+    expect(urlOf(spy)).toContain('/api/scenarios/rogue_device/run');
+    expect(urlOf(spy)).toContain('protection=false');
+    expect(spy.mock.calls[0][1].headers[OG.OPERATOR_HEADER]).toBe(OG.DEMO_OPERATOR_TOKEN);
+
+    spy.mockClear();
+    await OG.runScenario(cfgWithOp, 'normal', { protection: true });
+    expect(urlOf(spy)).toContain('protection=true');
+    expect(spy.mock.calls[0][1].headers?.[OG.OPERATOR_HEADER]).toBeUndefined();
+  });
+
+  it('OFF succeeds with the operator header and fails without it', async () => {
+    mockFetch({ body: { final_decision: 'ALLOW', policy_decision: 'BYPASSED' } });
+    const ok = await OG.runScenario(cfgWithOp, 'rogue_device', { protection: false });
+    expect(ok.final_decision).toBe('ALLOW');
+
+    /* Backend contract: protection=false without X-OmniGuard-Operator is 401. */
+    mockFetch({
+      ok: false,
+      status: 401,
+      body: {
+        detail:
+          'Disabling protection requires X-OmniGuard-Operator header (demo comparison only)',
+      },
+    });
+    await expect(
+      fetch(
+        'http://127.0.0.1:8000/api/scenarios/rogue_device/run?protection=false&reset_first=true',
+        { method: 'POST' },
+      ).then(async (r) => {
+        const body = JSON.parse(await r.text());
+        if (!r.ok) {
+          const err = new Error(body.detail);
+          err.status = r.status;
+          throw err;
+        }
+        return body;
+      }),
+    ).rejects.toMatchObject({ status: 401 });
+  });
+});
+
+describe('teleop rejection reasons', () => {
+  it('prefers reasons[] over a singular reason field', () => {
+    expect(OG.rejectionReasons({
+      status: 'REJECTED',
+      reasons: ['RESTRICTED_DESTINATION', 'SEQUENCE_REPLAY'],
+      reason: 'ignored',
+    })).toEqual(['RESTRICTED_DESTINATION', 'SEQUENCE_REPLAY']);
+  });
+
+  it('falls back to singular reason when reasons[] is absent', () => {
+    expect(OG.rejectionReasons({ status: 'REJECTED', reason: 'LEASE_EXPIRED' }))
+      .toEqual(['LEASE_EXPIRED']);
   });
 });
 

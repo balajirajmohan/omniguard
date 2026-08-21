@@ -16,25 +16,38 @@ export const DEFAULTS = {
   robot: 'robot-01',
 };
 
-/* The fleet credential is deliberately NOT persisted — it stays in memory for
- * the life of the tab. Writing it to localStorage would leave a working robot
- * credential sitting in the browser profile after the demo. */
+/* The fleet credential and demo operator token are deliberately NOT persisted —
+ * they stay in memory for the life of the tab. Writing either to localStorage
+ * would leave working secrets in the browser profile after the demo. */
 export const DEMO_CREDENTIAL = 'fleet-agent-valid-token';
+/** Matches backend OMNIGUARD_OPERATOR_TOKEN — required only for Protection OFF. */
+export const DEMO_OPERATOR_TOKEN = 'omniguard-operator';
+export const OPERATOR_HEADER = 'X-OmniGuard-Operator';
 
 export function loadConfig() {
   try {
     const saved = JSON.parse(localStorage.getItem('omniguard.cfg') || '{}');
-    delete saved.credential;   // ignore anything a previous build persisted
-    delete saved.bridge;       // the bridge is not addressable from a browser
-    return { ...DEFAULTS, ...saved, credential: DEMO_CREDENTIAL };
+    delete saved.credential;      // ignore anything a previous build persisted
+    delete saved.operatorToken;
+    delete saved.bridge;          // the bridge is not addressable from a browser
+    return {
+      ...DEFAULTS,
+      ...saved,
+      credential: DEMO_CREDENTIAL,
+      operatorToken: DEMO_OPERATOR_TOKEN,
+    };
   } catch {
-    return { ...DEFAULTS, credential: DEMO_CREDENTIAL };
+    return {
+      ...DEFAULTS,
+      credential: DEMO_CREDENTIAL,
+      operatorToken: DEMO_OPERATOR_TOKEN,
+    };
   }
 }
 
 export function saveConfig(cfg) {
   try {
-    const { credential, ...persistable } = cfg;   // credential intentionally dropped
+    const { credential, operatorToken, ...persistable } = cfg;
     localStorage.setItem('omniguard.cfg', JSON.stringify(persistable));
   } catch { /* private mode */ }
 }
@@ -111,12 +124,14 @@ export class ApiError extends Error {
   }
 }
 
-async function request(cfg, method, path, body) {
+async function request(cfg, method, path, body, extraHeaders) {
   let res;
+  const headers = { ...(extraHeaders || {}) };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
   try {
     res = await fetch(cfg.api + path, {
       method,
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      headers: Object.keys(headers).length ? headers : undefined,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (err) {
@@ -134,7 +149,30 @@ async function request(cfg, method, path, body) {
 }
 
 export const apiGet = (cfg, path) => request(cfg, 'GET', path);
-const apiPost = (cfg, path, body) => request(cfg, 'POST', path, body);
+const apiPost = (cfg, path, body, extraHeaders) =>
+  request(cfg, 'POST', path, body, extraHeaders);
+
+/** Backend move/start rejects use `reasons[]`; older shapes used a singular `reason`. */
+export function rejectionReasons(resOrBody) {
+  if (!resOrBody || typeof resOrBody !== 'object') return [];
+  if (Array.isArray(resOrBody.reasons) && resOrBody.reasons.length) {
+    return resOrBody.reasons.map(String);
+  }
+  if (resOrBody.reason != null && resOrBody.reason !== '') {
+    return [String(resOrBody.reason)];
+  }
+  if (Array.isArray(resOrBody.detail)) {
+    return resOrBody.detail.map((d) =>
+      typeof d === 'string' ? d : (d?.msg ?? JSON.stringify(d)));
+  }
+  if (typeof resOrBody.detail === 'string' && resOrBody.detail) {
+    return [resOrBody.detail];
+  }
+  if (resOrBody.status && !['EXECUTED', 'QUEUED', 'ALLOW'].includes(resOrBody.status)) {
+    return [String(resOrBody.status)];
+  }
+  return [];
+}
 
 /* ------------------------------------------------------- read endpoints */
 
@@ -147,9 +185,24 @@ export const listScenarios     = (cfg) => apiGet(cfg, '/api/scenarios');
 export const investigate       = (cfg) => apiPost(cfg, '/api/investigate');
 export const resetBackend      = (cfg) => apiPost(cfg, '/api/reset');
 
-export const runScenario = (cfg, id, { protection = true, resetFirst = true } = {}) =>
-  apiPost(cfg, `/api/scenarios/${encodeURIComponent(id)}/run` +
-    `?protection=${protection}&reset_first=${resetFirst}`);
+/**
+ * Run a named scenario. Protection OFF is a judge/demo comparison only and
+ * requires the in-memory operator token — never persisted, never optional when
+ * protection=false (backend returns 401 without X-OmniGuard-Operator).
+ */
+export const runScenario = (cfg, id, { protection = true, resetFirst = true } = {}) => {
+  const headers = {};
+  if (!protection) {
+    headers[OPERATOR_HEADER] = cfg.operatorToken || DEMO_OPERATOR_TOKEN;
+  }
+  return apiPost(
+    cfg,
+    `/api/scenarios/${encodeURIComponent(id)}/run`
+      + `?protection=${protection}&reset_first=${resetFirst}`,
+    undefined,
+    headers,
+  );
+};
 
 /* --------------------------------------------- teleoperation gateway ---
  * Frozen contract. Field names and shapes are fixed by agreement with the

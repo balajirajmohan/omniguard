@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   DEADZONE, FALLBACK_TELEOP_CONFIG, LOOKAHEAD,
   clamp, getEvents, getHealth, getState, getTeleopConfig, getTimeline,
-  readPosition, resetBackend, speedFor, teleopMove, teleopStart, teleopStop, zoneAt,
+  readPosition, rejectionReasons, resetBackend, speedFor, teleopMove, teleopStart,
+  teleopStop, zoneAt,
 } from './omniguard.js';
 
 const PANEL_IDS = ['legit', 'rogue'];
@@ -164,18 +165,22 @@ export function useController(cfg) {
         controlId: s.controlId, sequence, x: point.x, y: point.y, speed,
       });
       if (res?.status && res.status !== 'EXECUTED' && res.status !== 'QUEUED') {
-        pushLog(id, 'BLOCK', res.reason ?? res.status);
-        patch(id, { lamp: 'block', lampLabel: res.status, reasons: [res.reason ?? res.status] });
+        const reasons = rejectionReasons(res);
+        const label = reasons.join(', ') || res.status;
+        pushLog(id, 'BLOCK', label);
+        patch(id, { lamp: 'block', lampLabel: res.status, reasons: reasons.length ? reasons : [res.status] });
         await stopSession(id, 'REJECTED_BY_BACKEND');
       }
     } catch (err) {
       /* Fail closed: any rejected packet ends the session immediately. */
+      const fromBody = rejectionReasons(err.body);
+      const reasons = fromBody.length ? fromBody : [String(err.message)];
       patch(id, {
         lamp: 'block',
         lampLabel: err.status === 409 ? 'LEASE INVALID' : 'REJECTED',
-        reasons: [String(err.message)],
+        reasons,
       });
-      pushLog(id, 'BLOCK', String(err.message));
+      pushLog(id, 'BLOCK', reasons.join(', '));
       await stopSession(id, 'REJECTED_BY_BACKEND');
     } finally {
       const cur = sessions.current[id];
