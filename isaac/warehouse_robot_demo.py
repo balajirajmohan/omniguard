@@ -1,13 +1,12 @@
 """Standalone Isaac Sim script for OmniGuard's mobile manipulator.
 
-Loads a bundled warehouse and assembles an Idealworks iw.hub, UR10e and
-Robotiq 2F-140. It drives the composite robot to whatever (x, y, speed) target
-the OmniGuard broker last approved via the CommandBridge HTTP server.
+Loads a bundled warehouse and the Clearpath RidgebackFranka mobile manipulator.
+It drives the robot root to whatever (x, y, speed) target the OmniGuard broker
+last approved via the CommandBridge HTTP server.
 
-The previous Nova Carter path was verified on AWS Isaac Sim 6.0.1. This new
-composite asset must be smoke-tested on that GPU host before claiming the same
-runtime status. The arm remains stowed and the gripper remains open in this
-phase; OmniGuard exposes only base MOVE and emergency STOP.
+The previous Nova Carter path was verified on AWS Isaac Sim 6.0.1. This bundled
+RidgebackFranka path must be smoke-tested on that GPU host before claiming the
+same runtime status. OmniGuard exposes only base MOVE and emergency STOP.
 
 Movement is kinematic (capped step toward target) for demo reliability — not a
 validated fleet controller. Asset paths can still shift between Isaac releases.

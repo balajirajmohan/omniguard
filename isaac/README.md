@@ -9,26 +9,47 @@
 | File                      | Role                                                                         |
 | ------------------------- | ---------------------------------------------------------------------------- |
 | `command_bridge.py`       | In-process HTTP server (`:8899`) — `GET /health`, `POST /move`, `POST /stop` |
-| `mobile_manipulator.py`   | Loads and assembles iw.hub → UR10e → Robotiq 2F-140                          |
+| `mobile_manipulator.py`   | Loads the bundled Clearpath Ridgeback + Franka mobile manipulator            |
 | `warehouse_robot_demo.py` | Warehouse + composite robot; kinematic base MOVE/STOP                        |
 
-Default Isaac Sim 6.0.1 assets:
+Default Isaac Sim 6.0.1 asset:
 
 ```text
-/Isaac/Robots/Idealworks/iwhub/iw_hub.usd
-/Isaac/Robots/UniversalRobots/ur10e/ur10e.usd
-/Isaac/Robots/Robotiq/2F-140/Robotiq_2F_140_config.usd
+/Isaac/Robots/Clearpath/RidgebackFranka/ridgeback_franka.usd
 ```
 
-`RobotAssembler` creates the fixed iw.hub→arm and arm→gripper attachments. The
-arm is held in a stowed pose and the gripper is held/defaulted open. This phase
-does **not** add arm trajectory, IK, grasp, or gripper commands to the broker.
+This bundled catalog robot is preferred because it is already a coherent mobile
+manipulator: wheeled Ridgeback base plus Franka/Panda-style arm and end-effector.
+This phase does **not** add arm trajectory, IK, grasp, or gripper commands to the
+broker; OmniGuard still exposes only base MOVE and emergency STOP.
+
+Useful catalog alternatives:
+
+```text
+/Isaac/Robots/Clearpath/RidgebackUr/ridgeback_ur5.usd       # visually close to UR-on-Ridgeback screenshots
+/Isaac/Robots/BostonDynamics/spot/spot_with_arm.usd         # arm, but not wheeled
+```
 
 ### Runtime tuning
 
+Override the bundled mobile manipulator asset if needed:
+
+```bash
+export OMNIGUARD_MOBILE_MANIPULATOR_USD=/Isaac/Robots/Clearpath/RidgebackFranka/ridgeback_franka.usd
+# export OMNIGUARD_MOBILE_MANIPULATOR_USD=/Isaac/Robots/Clearpath/RidgebackUr/ridgeback_ur5.usd
+```
+
+### Legacy composite fallback
+
+The old custom assembly path can be enabled only for experiments:
+
+```bash
+export OMNIGUARD_USE_COMPOSITE_MOBILE_MANIPULATOR=true
+```
+
 Mount prims are discovered by name and validated before assembly. If the catalog
-asset hierarchy differs on the GPU image, set a relative path below the
-corresponding robot root (or an absolute stage path):
+asset hierarchy differs on the GPU image for the legacy composite path, set a
+relative path below the corresponding robot root (or an absolute stage path):
 
 ```bash
 export OMNIGUARD_IWHUB_ARM_MOUNT=base_link
@@ -48,7 +69,7 @@ export OMNIGUARD_GRIPPER_MOUNT_ROTATION_DEGREES=0,0,0
 export OMNIGUARD_UR10E_STOW_DEGREES=0,-90,90,-90,-90,0
 ```
 
-Asset paths can also be overridden with `OMNIGUARD_IWHUB_USD`,
+Legacy component asset paths can also be overridden with `OMNIGUARD_IWHUB_USD`,
 `OMNIGUARD_UR10E_USD`, and `OMNIGUARD_ROBOTIQ_2F140_USD`. The process fails
 closed with a prim diagnostic if required assets, mounts, or UR10e joints cannot
 be found.
@@ -75,11 +96,11 @@ Do **not** run `scripts/run_demo.sh` for the final Isaac demo — it starts `fak
 
 ### GPU acceptance checks
 
-Before demo use, confirm all three components appear, the arm base is above the
-iw.hub deck with no visible intersection, the gripper is aligned to the UR10e
-flange, MOVE carries the entire assembly, and STOP halts the current waypoint.
-If a mount cannot be discovered, copy the available prim path from the emitted
-diagnostic into the relevant override above.
+Before demo use, confirm the Ridgeback base, arm, and end-effector appear as one
+coherent robot, MOVE carries the entire asset, and STOP halts the current
+waypoint. If using the legacy composite path and a mount cannot be discovered,
+copy the available prim path from the emitted diagnostic into the relevant
+override above.
 
 ## Laptop poll contract (optional)
 

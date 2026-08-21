@@ -54,8 +54,9 @@ After launch:
    - `small_warehouse_digital_twin.usd`
    - `warehouse.usd`
    - `warehouse_with_forklifts.usd`
-2. Run the repository script to compose only bundled assets: **Idealworks
-   iw.hub + UR10e + Robotiq 2F-140**. Do not import a custom robot.
+2. Run the repository script to load only bundled Isaac assets: **Clearpath
+   RidgebackFranka** (`/Isaac/Robots/Clearpath/RidgebackFranka/ridgeback_franka.usd`).
+   Do not import a custom robot.
 3. Mark three destinations: `ZONE_A`, `ZONE_B`, `HUMAN_ZONE`.
 4. Run one Isaac Python movement example so the robot visibly moves Zone A → Zone B.
 5. Download warehouse / robot assets **locally on the instance** so demos do not wait on network loads.
@@ -65,9 +66,9 @@ After launch:
 - [ ] Isaac Sim launches successfully
 - [ ] Warehouse scene loads
 - [ ] One mobile robot appears
-- [ ] iw.hub, UR10e, and Robotiq 2F-140 all appear as one coherent assembly
-- [ ] Arm/gripper mounts have no visible gaps or interpenetration
-- [ ] UR10e remains in the stowed pose and the gripper remains open
+- [ ] Clearpath RidgebackFranka appears as one coherent wheeled mobile manipulator
+- [ ] Arm/end-effector has no obvious visual gaps or interpenetration
+- [ ] Arm remains in a safe default pose; no broker arm/gripper commands are exposed
 - [ ] Python script moves robot Zone A → Zone B
 - [ ] A STOP request halts the composite robot before the current target
 - [ ] Mac can reach the GPU machine over DCV

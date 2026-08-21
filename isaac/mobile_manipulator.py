@@ -4,15 +4,23 @@ This module intentionally has no Isaac Sim imports at module load time.  The
 standalone application imports it after ``SimulationApp`` has initialized Kit,
 while laptop tests can still exercise the path/configuration helpers.
 
-The assembled robot is:
+The default robot is the bundled catalog mobile manipulator:
+
+    Clearpath Ridgeback + Franka arm/gripper
+
+This is intentionally loaded as a single coherent USD asset because it already
+matches OmniGuard's demo need: a wheeled base with an arm that can manipulate
+objects.  The older custom assembly path is retained as an opt-in fallback for
+experiments:
 
     Idealworks iw.hub -> Universal Robots UR10e -> Robotiq 2F-140
 
-Robot Assembler creates the simulated fixed joints.  A shared parent Xform is
-also used as the kinematic demo root so the three referenced assets remain
-visually coherent while OmniGuard's existing waypoint demo moves the platform.
-The arm is held at a conservative home target and the gripper is held open;
-this phase deliberately exposes no manipulation command surface.
+For the fallback path, Robot Assembler creates the simulated fixed joints.  A
+shared parent Xform is also used as the kinematic demo root so the three
+referenced assets remain visually coherent while OmniGuard's existing waypoint
+demo moves the platform.  This phase deliberately exposes no manipulation
+command surface through the broker; base MOVE and STOP remain the proven demo
+commands.
 """
 
 from __future__ import annotations
@@ -30,6 +38,10 @@ MOBILE_MANIPULATOR_ROOT_PRIM_PATH = "/World/OmniGuardMobileManipulator"
 IWHUB_PRIM_PATH = f"{MOBILE_MANIPULATOR_ROOT_PRIM_PATH}/Base"
 UR10E_PRIM_PATH = f"{MOBILE_MANIPULATOR_ROOT_PRIM_PATH}/Arm"
 ROBOTIQ_2F140_PRIM_PATH = f"{MOBILE_MANIPULATOR_ROOT_PRIM_PATH}/Gripper"
+
+RIDGEBACK_FRANKA_USD_PATH = "/Isaac/Robots/Clearpath/RidgebackFranka/ridgeback_franka.usd"
+RIDGEBACK_UR5_USD_PATH = "/Isaac/Robots/Clearpath/RidgebackUr/ridgeback_ur5.usd"
+MOBILE_MANIPULATOR_USD_PATH = RIDGEBACK_FRANKA_USD_PATH
 
 IWHUB_USD_PATH = "/Isaac/Robots/Idealworks/iwhub/iw_hub.usd"
 UR10E_USD_PATH = "/Isaac/Robots/UniversalRobots/ur10e/ur10e.usd"
@@ -105,6 +117,19 @@ def parse_numeric_tuple(
     return parsed
 
 
+def parse_bool_setting(value: str, *, setting_name: str) -> bool:
+    """Parse a boolean environment setting."""
+
+    normalised = value.strip().lower()
+    if normalised in {"1", "true", "yes", "on"}:
+        return True
+    if normalised in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        f"{setting_name} must be boolean: expected true/false, received {value!r}"
+    )
+
+
 def resolve_asset_path(assets_root_path: str, configured_path: str) -> str:
     """Resolve an Isaac catalog path while preserving URI/local overrides."""
 
@@ -132,6 +157,8 @@ class MountOffset:
 class MobileManipulatorConfig:
     """Runtime-tunable asset, attachment and safe-pose configuration."""
 
+    mobile_manipulator_usd: str = MOBILE_MANIPULATOR_USD_PATH
+    use_composite_assets: bool = False
     iwhub_usd: str = IWHUB_USD_PATH
     ur10e_usd: str = UR10E_USD_PATH
     robotiq_usd: str = ROBOTIQ_2F140_USD_PATH
@@ -196,6 +223,13 @@ class MobileManipulatorConfig:
             raise ValueError("OMNIGUARD_ASSET_LOAD_TIMEOUT_SECONDS must be positive")
 
         return cls(
+            mobile_manipulator_usd=os.getenv(
+                "OMNIGUARD_MOBILE_MANIPULATOR_USD", MOBILE_MANIPULATOR_USD_PATH
+            ),
+            use_composite_assets=parse_bool_setting(
+                os.getenv("OMNIGUARD_USE_COMPOSITE_MOBILE_MANIPULATOR", "false"),
+                setting_name="OMNIGUARD_USE_COMPOSITE_MOBILE_MANIPULATOR",
+            ),
             iwhub_usd=os.getenv("OMNIGUARD_IWHUB_USD", IWHUB_USD_PATH),
             ur10e_usd=os.getenv("OMNIGUARD_UR10E_USD", UR10E_USD_PATH),
             robotiq_usd=os.getenv("OMNIGUARD_ROBOTIQ_2F140_USD", ROBOTIQ_2F140_USD_PATH),
@@ -347,7 +381,7 @@ def _append_mount_offset(prim, offset: MountOffset, *, suffix: str) -> None:
     transform.SetTranslation(Gf.Vec3d(*offset.translation))
     transform.SetRotation(rotation)
     UsdGeom.Xformable(prim).AddTransformOp(
-        op_suffix=f"omniguard_{suffix}"
+        opSuffix=f"omniguard_{suffix}"
     ).Set(transform.GetMatrix())
 
 
@@ -492,6 +526,36 @@ def build_mobile_manipulator(
     if existing.IsValid():
         raise MobileManipulatorAssemblyError(
             f"Stage already contains {MOBILE_MANIPULATOR_ROOT_PRIM_PATH}"
+        )
+
+    if not config.use_composite_assets:
+        usd_path = resolve_asset_path(assets_root_path, config.mobile_manipulator_usd)
+        log(
+            "Loading bundled Isaac mobile manipulator asset "
+            f"{usd_path} at {MOBILE_MANIPULATOR_ROOT_PRIM_PATH}"
+        )
+        add_reference_to_stage(
+            usd_path=usd_path,
+            prim_path=MOBILE_MANIPULATOR_ROOT_PRIM_PATH,
+        )
+        _wait_for_references(
+            stage,
+            (MOBILE_MANIPULATOR_ROOT_PRIM_PATH,),
+            timeout_seconds=config.asset_load_timeout_seconds,
+        )
+        log(
+            "OmniGuard mobile manipulator loaded from bundled Ridgeback+Franka "
+            "asset; base MOVE/STOP controls move the whole robot root"
+        )
+        return MobileManipulatorAssembly(
+            root_prim_path=MOBILE_MANIPULATOR_ROOT_PRIM_PATH,
+            base_prim_path=MOBILE_MANIPULATOR_ROOT_PRIM_PATH,
+            arm_prim_path=MOBILE_MANIPULATOR_ROOT_PRIM_PATH,
+            gripper_prim_path=MOBILE_MANIPULATOR_ROOT_PRIM_PATH,
+            base_arm_mount_path=MOBILE_MANIPULATOR_ROOT_PRIM_PATH,
+            arm_base_mount_path=MOBILE_MANIPULATOR_ROOT_PRIM_PATH,
+            arm_tool_mount_path=MOBILE_MANIPULATOR_ROOT_PRIM_PATH,
+            gripper_base_mount_path=MOBILE_MANIPULATOR_ROOT_PRIM_PATH,
         )
 
     UsdGeom.Xform.Define(stage, MOBILE_MANIPULATOR_ROOT_PRIM_PATH)
