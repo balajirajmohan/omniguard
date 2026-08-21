@@ -4,6 +4,7 @@ on:
     push:
         branches:
             - main
+            - feat/gitlab-sync
     workflow_dispatch:
 
 permissions:
@@ -53,6 +54,6 @@ jobs:
                   ASKPASS
                   chmod 700 "${GIT_ASKPASS}"
 
-                  git push --force \
+                  git push --force-with-lease \
                     "https://gitlab.presidio.com/omniguard/omniguard.git" \
                     "HEAD:refs/heads/main"
