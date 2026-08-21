@@ -97,7 +97,6 @@ def test_caller_cannot_inject_behavioral_features():
             "previous_failures": 0,
             "hour_of_day": 10,
             "seconds_since_last_command": 60,
-            "protection_enabled": True,
         },
     )
     assert rejected.status_code == 422
@@ -111,7 +110,6 @@ def test_server_derived_behavior_history():
             "device_id": "fleet-controller-01",
             "destination": "SAFE_ZONE_B",
             "speed": 0.8,
-            "protection_enabled": True,
         },
     ).json()
     assert first["behavior"]["source"] == "server"
@@ -122,7 +120,6 @@ def test_server_derived_behavior_history():
             "device_id": "fleet-controller-01",
             "destination": "SAFE_ZONE_B",
             "speed": 0.8,
-            "protection_enabled": True,
         },
     ).json()
     assert second["behavior"]["commands_last_10_seconds"] >= 1
@@ -144,9 +141,43 @@ def test_attack_is_blocked():
 
 
 def test_unprotected_attack_is_forwarded():
-    result = client.post("/api/demo/attack?protection=false").json()
+    result = client.post(
+        "/api/demo/attack?protection=false",
+        headers={"X-OmniGuard-Operator": "omniguard-operator"},
+    ).json()
     assert result["final_decision"] == "ALLOW"
     assert result["policy_decision"] == "BYPASSED"
+
+
+def test_unprotected_attack_requires_operator():
+    denied = client.post("/api/demo/attack?protection=false")
+    assert denied.status_code == 401
+
+
+def test_commands_cannot_disable_protection():
+    # Extra field rejected; body without protection always enforces.
+    rejected = client.post(
+        "/api/commands",
+        json={
+            "credential": "fleet-agent-valid-token",
+            "device_id": "unknown-attacker-device",
+            "destination": "RESTRICTED_ZONE",
+            "speed": 3.5,
+            "protection_enabled": False,
+        },
+    )
+    assert rejected.status_code == 422
+    blocked = client.post(
+        "/api/commands",
+        json={
+            "credential": "fleet-agent-valid-token",
+            "device_id": "unknown-attacker-device",
+            "destination": "RESTRICTED_ZONE",
+            "speed": 3.5,
+        },
+    ).json()
+    assert blocked["final_decision"] == "BLOCK"
+    assert blocked["protection_enabled"] is True
 
 
 def test_revoked_credential_stays_blocked():
@@ -158,7 +189,6 @@ def test_revoked_credential_stays_blocked():
             "device_id": "fleet-controller-01",
             "destination": "SAFE_ZONE_B",
             "speed": 0.8,
-            "protection_enabled": True,
         },
     ).json()
     assert again["final_decision"] == "BLOCK"
@@ -173,7 +203,6 @@ def test_unknown_zone_is_blocked():
             "device_id": "fleet-controller-01",
             "destination": "UNSAFE_ZONE",
             "speed": 0.8,
-            "protection_enabled": True,
         },
     ).json()
     assert result["final_decision"] == "BLOCK"
