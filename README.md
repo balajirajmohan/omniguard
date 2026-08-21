@@ -27,6 +27,8 @@ omniguard/
 
 ## Quick start — primary hackathon demo (no GPU)
 
+> **Local demo only:** the `:8000` backend uses a shared demo credential string, not signed JWTs. `scripts/run_demo.sh` binds **127.0.0.1**. Prefer Srikanth's JWT broker on `:8001` when you need claim verification.
+
 ```bash
 bash scripts/setup.sh
 bash scripts/run_demo.sh

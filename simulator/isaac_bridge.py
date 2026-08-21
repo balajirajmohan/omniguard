@@ -12,6 +12,9 @@ import time
 import requests
 
 API = os.getenv("OMNIGUARD_API_URL", "http://localhost:8000")
+SIM_HEADERS = {
+    "X-OmniGuard-Simulator": os.getenv("OMNIGUARD_SIMULATOR_TOKEN", "omniguard-sim")
+}
 
 
 def reset_robot() -> None:
@@ -45,18 +48,25 @@ def _telemetry(status: str, zone: str, speed: float) -> None:
         requests.post(
             f"{API}/api/robots/robot-01/telemetry",
             json={"status": status, "zone": zone, "speed": speed},
+            headers=SIM_HEADERS,
             timeout=5,
         ).raise_for_status()
     except requests.RequestException as exc:
         print(f"telemetry failed: {exc}")
 
 
+def _next_command() -> dict:
+    return requests.get(
+        f"{API}/api/robots/robot-01/next-command",
+        headers=SIM_HEADERS,
+        timeout=5,
+    ).json()
+
+
 print("Isaac bridge polling OmniGuard...")
 while True:
     try:
-        command = requests.get(
-            f"{API}/api/robots/robot-01/next-command", timeout=5
-        ).json()
+        command = _next_command()
         action = command.get("action")
         if action == "RESET":
             reset_robot()

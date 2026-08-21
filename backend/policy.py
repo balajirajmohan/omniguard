@@ -1,10 +1,16 @@
-"""Deterministic Zero-Trust policy for robot movement commands."""
+"""Deterministic Zero-Trust policy for robot movement commands.
+
+Demo credential is a shared secret for the four-button laptop path.
+For signed, expiring credentials use broker/ (JWT) on :8001.
+"""
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
-VALID_TOKEN = "fleet-agent-valid-token"
+# Override in .env for anything beyond a private laptop demo.
+VALID_TOKEN = os.getenv("OMNIGUARD_DEMO_TOKEN", "fleet-agent-valid-token")
 KNOWN_DEVICE = "fleet-controller-01"
 AUTHORIZED_AGENT = "fleet-agent-01"
 AUTHORIZED_ROBOT = "robot-01"
@@ -44,7 +50,8 @@ def collect_reasons(
         reasons.append("UNAUTHORIZED_ROBOT")
     if device_id != KNOWN_DEVICE:
         reasons.append("UNKNOWN_DEVICE")
-    if destination == RESTRICTED_ZONE:
+    # Allowlist: anything outside declared safe zones is restricted.
+    if destination not in SAFE_ZONES:
         reasons.append("RESTRICTED_DESTINATION")
     if speed > MAX_SPEED:
         reasons.append("EXCESSIVE_SPEED")
