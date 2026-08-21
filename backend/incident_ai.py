@@ -1,4 +1,4 @@
-"""Optional Claude/OpenAI explanation with a safe local fallback.
+"""Optional Claude/OpenAI explanation with schema-validated fallback.
 
 Safety boundary: this module never issues robot movement commands.
 """
@@ -6,11 +6,45 @@ Safety boundary: this module never issues robot movement commands.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
 from datetime import datetime, timezone
+from typing import Any
+
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
+logger = logging.getLogger("omniguard.incident_ai")
 
 
-def _fallback(event: dict) -> dict:
+class IncidentExplanation(BaseModel):
+    summary: str
+    physical_impact: str = ""
+    why_suspicious: list[str] = Field(default_factory=list)
+    containment_taken: list[str] = Field(default_factory=list)
+    recommended_actions: list[str] = Field(default_factory=list)
+    provider: str = "fallback"
+    model: str = "deterministic-template"
+    generated_at: str = ""
+    fallback_used: bool = True
+    fallback_reason: str | None = None
+    latency_ms: float | None = None
+
+    @field_validator("why_suspicious", "containment_taken", "recommended_actions", mode="before")
+    @classmethod
+    def _ensure_list(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            if value and all(isinstance(item, str) and len(item) == 1 for item in value):
+                return ["".join(value)]
+            return [str(item) for item in value]
+        return [str(value)]
+
+
+def _fallback(event: dict, *, reason: str = "deterministic_template") -> dict:
     reasons = ", ".join(event.get("reasons", [])) or "abnormal command context"
     summary = (
         "A valid fleet credential attempted an unsafe robot command. "
@@ -18,27 +52,29 @@ def _fallback(event: dict) -> dict:
         "was stopped, and the credential was revoked. An operator should verify "
         "the originating device and rotate the affected agent credential."
     )
-    return {
-        "summary": summary,
-        "physical_impact": (
+    payload = IncidentExplanation(
+        summary=summary,
+        physical_impact=(
             "Unsafe movement toward a restricted human zone at elevated speed "
             "could endanger people or equipment."
             if event.get("destination") == "RESTRICTED_ZONE"
             or "RESTRICTED_DESTINATION" in event.get("reasons", [])
             else "Abnormal command context could produce unintended physical motion."
         ),
-        "why_suspicious": event.get("reasons", []) or ["abnormal command context"],
-        "containment_taken": event.get("actions", []),
-        "recommended_actions": [
+        why_suspicious=list(event.get("reasons", []) or ["abnormal command context"]),
+        containment_taken=list(event.get("actions", [])),
+        recommended_actions=[
             "Verify the originating device identity",
             "Rotate the affected agent credential",
             "Review recent commands from this agent",
         ],
-        "provider": "fallback",
-        "model": "deterministic-template",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "fallback_used": True,
-    }
+        provider="fallback",
+        model="deterministic-template",
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        fallback_used=True,
+        fallback_reason=reason,
+    )
+    return payload.model_dump()
 
 
 def _parse_llm_json(text: str) -> dict | None:
@@ -62,28 +98,38 @@ def _parse_llm_json(text: str) -> dict | None:
     return data
 
 
-def _normalize(data: dict, *, provider: str, model: str, fallback_used: bool) -> dict:
-    return {
-        "summary": data.get("summary") or "Incident explanation unavailable.",
-        "physical_impact": data.get("physical_impact") or "",
-        "why_suspicious": list(data.get("why_suspicious") or []),
-        "containment_taken": list(
-            data.get("containment_taken") or data.get("actions") or []
-        ),
-        "recommended_actions": list(data.get("recommended_actions") or []),
-        "provider": provider,
-        "model": model,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "fallback_used": fallback_used,
-    }
+def _normalize(
+    data: dict,
+    *,
+    provider: str,
+    model: str,
+    latency_ms: float,
+) -> dict:
+    parsed = IncidentExplanation(
+        summary=str(data.get("summary") or "Incident explanation unavailable."),
+        physical_impact=str(data.get("physical_impact") or ""),
+        why_suspicious=data.get("why_suspicious") or [],
+        containment_taken=data.get("containment_taken")
+        or data.get("actions")
+        or [],
+        recommended_actions=data.get("recommended_actions") or [],
+        provider=provider,
+        model=model,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        fallback_used=False,
+        fallback_reason=None,
+        latency_ms=latency_ms,
+    )
+    return parsed.model_dump()
 
 
-def _explain_bedrock(event: dict) -> dict | None:
+def _explain_bedrock(event: dict) -> dict:
     model_id = os.getenv("BEDROCK_MODEL_ID")
     if not model_id:
-        return None
+        raise RuntimeError("BEDROCK_MODEL_ID not configured")
     import boto3
 
+    started = time.perf_counter()
     prompt = (
         "Explain this cyber-physical security incident. "
         "Use only the supplied evidence. Return JSON with keys: "
@@ -114,17 +160,23 @@ def _explain_bedrock(event: dict) -> dict | None:
     text = response["output"]["message"]["content"][0]["text"]
     parsed = _parse_llm_json(text)
     if not parsed:
-        return None
-    return _normalize(parsed, provider="bedrock", model=model_id, fallback_used=False)
+        raise ValueError("bedrock response was not valid JSON object")
+    return _normalize(
+        parsed,
+        provider="bedrock",
+        model=model_id,
+        latency_ms=(time.perf_counter() - started) * 1000,
+    )
 
 
-def _explain_openai(event: dict) -> dict | None:
+def _explain_openai(event: dict) -> dict:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        return None
+        raise RuntimeError("OPENAI_API_KEY not configured")
     from urllib import request
 
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    started = time.perf_counter()
     body = {
         "model": model,
         "temperature": 0.1,
@@ -160,40 +212,103 @@ def _explain_openai(event: dict) -> dict | None:
     text = payload["choices"][0]["message"]["content"]
     parsed = _parse_llm_json(text)
     if not parsed:
-        return None
-    return _normalize(parsed, provider="openai", model=model, fallback_used=False)
+        raise ValueError("openai response was not valid JSON object")
+    return _normalize(
+        parsed,
+        provider="openai",
+        model=model,
+        latency_ms=(time.perf_counter() - started) * 1000,
+    )
+
+
+def _explain_anthropic(event: dict) -> dict:
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY not configured")
+    from urllib import request
+
+    model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-haiku-latest")
+    started = time.perf_counter()
+    body = {
+        "model": model,
+        "max_tokens": 500,
+        "temperature": 0.1,
+        "system": (
+            "You are OmniGuard's cyber-physical incident analyst. "
+            "Return only a JSON object with keys summary, physical_impact, "
+            "why_suspicious, containment_taken, recommended_actions. "
+            "Never issue robot movement commands."
+        ),
+        "messages": [
+            {
+                "role": "user",
+                "content": "Evidence:\n" + json.dumps(event, indent=2),
+            }
+        ],
+    }
+    req = request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(body).encode(),
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+    with request.urlopen(req, timeout=30) as resp:
+        payload = json.loads(resp.read().decode())
+    text = payload["content"][0]["text"]
+    parsed = _parse_llm_json(text)
+    if not parsed:
+        raise ValueError("anthropic response was not valid JSON object")
+    return _normalize(
+        parsed,
+        provider="anthropic",
+        model=model,
+        latency_ms=(time.perf_counter() - started) * 1000,
+    )
 
 
 def explain_incident(event: dict) -> dict:
     provider = os.getenv("LLM_PROVIDER", "fallback").lower()
+    if provider in {"", "fallback", "none", "template"}:
+        return _fallback(event, reason="provider_not_configured")
     try:
         if provider == "bedrock":
-            result = _explain_bedrock(event)
-            if result:
-                return result
-        elif provider == "openai":
-            result = _explain_openai(event)
-            if result:
-                return result
-    except Exception:
-        pass
-    return _fallback(event)
+            return _explain_bedrock(event)
+        if provider == "openai":
+            return _explain_openai(event)
+        if provider in {"anthropic", "claude"}:
+            return _explain_anthropic(event)
+        return _fallback(event, reason=f"unknown_provider:{provider}")
+    except (ValidationError, RuntimeError, ValueError, OSError, KeyError) as exc:
+        logger.warning("LLM provider %s failed: %s", provider, exc)
+        return _fallback(event, reason=f"{provider}_error:{exc}")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected LLM failure for provider=%s", provider)
+        return _fallback(event, reason=f"{provider}_unexpected:{exc}")
 
 
 def llm_status() -> dict:
     provider = os.getenv("LLM_PROVIDER", "fallback").lower()
     if provider == "bedrock":
         model = os.getenv("BEDROCK_MODEL_ID") or ""
-        configured = bool(model)
+        live = bool(model)
     elif provider == "openai":
         model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        configured = bool(os.getenv("OPENAI_API_KEY"))
+        live = bool(os.getenv("OPENAI_API_KEY"))
+    elif provider in {"anthropic", "claude"}:
+        model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-haiku-latest")
+        live = bool(os.getenv("ANTHROPIC_API_KEY"))
     else:
         model = "deterministic-template"
-        configured = True
+        live = False
     return {
-        "provider": provider,
-        "model": model,
-        "configured": configured,
+        "provider": provider if live else "fallback",
+        "requested_provider": provider,
+        "model": model if live else "deterministic-template",
+        "configured": live,
+        "mode": "live" if live else "deterministic_fallback",
         "controls_robot": False,
     }

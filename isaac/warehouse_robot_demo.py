@@ -84,21 +84,41 @@ def main():
 
     bridge = CommandBridge(port=8899)
     bridge.start()
-    print("OmniGuard Isaac bridge listening on :8899")
+    print(f"OmniGuard Isaac bridge listening on {bridge.host}:{bridge.port}")
 
     target = None  # (x, y, speed)
 
     while simulation_app.is_running():
         world.step(render=True)
+        pos = get_position()
+        bridge.update_state(
+            position={"x": float(pos[0]), "y": float(pos[1]), "z": float(pos[2])},
+            speed=float(target[2]) if target else 0.0,
+            motion_state="MOVING" if target else "IDLE",
+            target={"x": target[0], "y": target[1]} if target else None,
+        )
 
-        if bridge.pop_stop(ROBOT_ID):
+        stop = bridge.pop_stop(ROBOT_ID)
+        if stop:
             target = None
-            print("EMERGENCY STOP received for", ROBOT_ID)
+            bridge.mark_executed(
+                stop.get("command_id"),
+                motion_state="STOPPED",
+                speed=0.0,
+                target=None,
+            )
+            print("EMERGENCY STOP executed for", ROBOT_ID)
             continue
 
         move = bridge.pop_move(ROBOT_ID)
         if move is not None:
             target = (move["x"], move["y"], min(move["speed"], MAX_STEP_SPEED))
+            bridge.mark_executed(
+                move.get("command_id"),
+                motion_state="MOVING",
+                speed=float(target[2]),
+                target={"x": target[0], "y": target[1]},
+            )
 
         if target is None:
             continue
@@ -109,6 +129,7 @@ def main():
         distance = math.hypot(dx, dy)
         if distance < 0.05:
             target = None
+            bridge.update_state(motion_state="IDLE", speed=0.0, target=None)
             continue
 
         dt = world.get_physics_dt() or (1.0 / 60.0)

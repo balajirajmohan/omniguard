@@ -11,13 +11,13 @@ A stolen fleet credential may still authenticate. OmniGuard checks identity cont
 | Layer | Status |
 |-------|--------|
 | Zero-Trust policy + containment | Working |
-| IsolationForest anomaly risk | Working |
-| Four-button + scenario dashboard | Working (browser) |
-| Fake-robot laptop path | Working (no GPU) |
-| Isaac Sim 6.0.1 move / e-stop path | Proven on AWS L40S (`:8899`) |
-| Real Claude / OpenAI explanation | Optional via env; defaults to labeled fallback |
-| Mac browser via SSM port-forward | Documented — run on operator laptop |
-| Production IAM / fleet controller | Out of scope for hackathon |
+| IsolationForest (server-derived features) | Working — artifact checksum + schema checks |
+| Four-button + scenario command center | Working |
+| Fake-robot laptop path | Working |
+| Isaac bridge auth + command ack | Working (bind `127.0.0.1`, token required) |
+| Mac browser via SSM | Documented |
+| Live LLM | Optional (`openai` / `bedrock` / `anthropic`); default deterministic fallback |
+| Investigation agent | Recommend-only tools; never moves robots |
 
 **Safety boundary:** AI may score and explain. Physical stop, revoke and quarantine stay in deterministic allowlisted code. An LLM never issues robot movement commands.
 
