@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from backend.actuation import maybe_actuate_move, maybe_actuate_stop
 from backend.anomaly import detector
-from backend.incident_ai import explain_incident
+from backend.incident_ai import explain_incident, llm_status
 from backend.policy import (
     KNOWN_DEVICE,
     RESTRICTED_ZONE,
@@ -20,6 +20,8 @@ from backend.policy import (
     collect_reasons,
     decide,
 )
+from backend.scenarios import get_scenario, list_scenarios
+
 
 # Local/hackathon demo API. Prefer private bind (run_demo.sh uses 127.0.0.1).
 # For signed credentials use broker.main:app (JWT) on :8001.
@@ -204,8 +206,65 @@ def evaluate(command: CommandRequest) -> dict[str, Any]:
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "service": "omniguard", "mode": "local-demo"}
+def health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "service": "omniguard",
+        "mode": "local-demo",
+        "robot_backend": os.getenv("OMNIGUARD_ROBOT_BACKEND", "mock"),
+        "isaac_bridge_url": os.getenv("ISAAC_BRIDGE_URL", "http://127.0.0.1:8899"),
+        "llm": llm_status(),
+    }
+
+
+@app.get("/api/scenarios")
+def scenarios() -> list[dict[str, Any]]:
+    return list_scenarios()
+
+
+@app.post("/api/scenarios/{scenario_id}/run")
+def run_scenario(
+    scenario_id: str,
+    protection: bool = Query(default=True),
+    reset_first: bool = Query(default=True),
+) -> dict[str, Any]:
+    scenario = get_scenario(scenario_id)
+    if scenario is None:
+        raise HTTPException(status_code=404, detail=f"Unknown scenario: {scenario_id}")
+
+    if reset_first and not scenario.get("requires_prior_revoke"):
+        reset_state()
+    elif scenario.get("requires_prior_revoke"):
+        # Ensure a revoked credential exists for the replay demo.
+        with _LOCK:
+            already_revoked = STATE["credential_status"] == "REVOKED"
+        if not already_revoked:
+            reset_state()
+            evaluate(
+                CommandRequest(
+                    credential=VALID_TOKEN,
+                    device_id="unknown-attacker-device",
+                    destination=RESTRICTED_ZONE,
+                    speed=3.5,
+                    commands_last_10_seconds=8,
+                    previous_failures=3,
+                    protection_enabled=True,
+                )
+            )
+
+    return evaluate(
+        CommandRequest(
+            credential=scenario["credential"],
+            agent_id=scenario["agent_id"],
+            device_id=scenario["device_id"],
+            robot_id=scenario["robot_id"],
+            destination=scenario["destination"],
+            speed=scenario["speed"],
+            commands_last_10_seconds=scenario["commands_last_10_seconds"],
+            previous_failures=scenario["previous_failures"],
+            protection_enabled=protection,
+        )
+    )
 
 
 @app.post("/api/reset")

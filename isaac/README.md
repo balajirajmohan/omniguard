@@ -1,21 +1,38 @@
-# Isaac Sim helpers (GPU day) — Srikanth + runbook
+# Isaac Sim helpers (GPU day)
 
-## Prefer for the event
-
-[`simulator/isaac_bridge.py`](../simulator/isaac_bridge.py) — same poll/telemetry contract as `fake_robot.py`.
-
-## Srikanth's preserved helpers
+## Proven path (AWS Isaac Sim 6.0.1 / L40S)
 
 | File | Role |
 |------|------|
-| `command_bridge.py` | In-process HTTP server (`:8899`) for push moves/stops from `broker.robot_adapter` |
-| `warehouse_robot_demo.py` | Warehouse + Nova Carter starter sketch (verify on GPU) |
+| `command_bridge.py` | In-process HTTP server (`:8899`) — `GET /health`, `POST /move`, `POST /stop` |
+| `warehouse_robot_demo.py` | Warehouse + Nova Carter; kinematic move toward targets |
 
-## Order of operations
+Nova Carter asset (Isaac 6.0.1):
 
-1. Laptop demo green (`bash scripts/run_demo.sh`).
-2. On GPU: Isaac launches; one robot moves/stops from Python.
-3. Either:
-   - Implement TODOs in `simulator/isaac_bridge.py` and stop `fake_robot`, **or**
-   - Start `command_bridge` inside Isaac and set `OMNIGUARD_ROBOT_BACKEND=isaac` / `ISAAC_BRIDGE_URL`.
-4. Record a backup video immediately.
+```text
+/Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd
+```
+
+### Order of operations
+
+1. One Isaac GUI only (close duplicates).
+2. From a **DCV** terminal with `DISPLAY` set:
+
+```bash
+/opt/IsaacSim/python.sh /path/to/omniguard/isaac/warehouse_robot_demo.py
+# wait for: OmniGuard Isaac bridge listening on :8899
+```
+
+3. Start OmniGuard **without** the fake robot:
+
+```bash
+bash scripts/run_isaac_services.sh
+```
+
+4. Operate from Mac browser via SSM: [docs/MAC_ACCESS.md](../docs/MAC_ACCESS.md)
+
+Do **not** run `scripts/run_demo.sh` for the final Isaac demo — it starts `fake_robot.py`.
+
+## Laptop poll contract (optional)
+
+[`simulator/isaac_bridge.py`](../simulator/isaac_bridge.py) mirrors `fake_robot.py` for poll/telemetry. The proven push path uses `OMNIGUARD_ROBOT_BACKEND=isaac` → Srikanth's `IsaacRobotController` against `:8899`.

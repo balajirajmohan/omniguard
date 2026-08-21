@@ -1,28 +1,38 @@
 # OmniGuard alignment notes
 
-Derived from the 21 Aug 2026 chat-history / code-alignment review and the official 22-hour runbook.
+Derived from the 21 Aug 2026 chat-history / code-alignment review, the 22-hour runbook,
+and the GPT troubleshooting / agentic-AI handoff (commit `35a5f90` baseline).
 
-## Principle on this branch
+## Principle
 
 **Keep Srikanth's working JWT + Isaac stack. Make the runbook/starter kit the primary event demo.**
 
 | Layer | Owner / source | Role now |
 |-------|----------------|----------|
-| `backend/` | Runbook + starter kit | Primary `:8000` API, IsolationForest, incident AI, four-button demo |
+| `backend/` | Runbook + starter kit | Primary `:8000` API, scenarios, IsolationForest, incident AI |
 | `broker/` | Srikanth | Preserved JWT `/token`+`/command` on `:8001`, policy, state, robot_adapter |
-| `isaac/` | Srikanth | `command_bridge.py`, `warehouse_robot_demo.py` |
+| `isaac/` | Srikanth (+ live 6.0.1 patch) | `command_bridge.py`, `warehouse_robot_demo.py` (NVIDIA/NovaCarter path) |
 | `infra/` | Srikanth (+ Marketplace terraform) | GPU provisioning options |
-| `simulator/` | Starter kit | Polling fake robot / Isaac bridge (shared HTTP contract) |
-| `dashboard/` | Starter kit UI | Four buttons against `backend` |
+| `simulator/` | Starter kit | Polling fake robot (laptop); optional poll bridge |
+| `dashboard/` | Starter kit UI | Four buttons + scenario library against `backend` |
 
-Dead leftovers from the pre-merge Cursor path (`broker/store.py`, `broker/isaac_adapter.py`, `broker/config.py`, `clients/`) stay **removed** — they never imported cleanly against Srikanth's models.
+Dead leftovers from the pre-merge Cursor path (`broker/store.py`, `broker/isaac_adapter.py`, `broker/config.py`, `clients/`) stay **removed**.
 
 ## Best-judgment wiring
 
-1. Event day → `bash scripts/run_demo.sh` (backend + fake_robot + dashboard).
-2. GPU day → implement `simulator/isaac_bridge.py` TODOs **or** run Srikanth's in-process `isaac/command_bridge.py` and set `OMNIGUARD_ROBOT_BACKEND=isaac`.
-3. Primary backend optionally **pushes** to Srikanth's Isaac adapter while still filling the poll queue (belt and suspenders).
-4. JWT broker remains runnable for deep policy demos without conflicting with `:8000`.
+1. Laptop / CI → `bash scripts/run_demo.sh` (backend + fake_robot + dashboard).
+2. GPU day → Isaac `warehouse_robot_demo.py` on `:8899`, then `bash scripts/run_isaac_services.sh` (no fake robot).
+3. Primary backend optionally **pushes** via Srikanth's Isaac adapter while still filling the poll queue.
+4. Mac operators → SSM port-forward to `:8501` ([MAC_ACCESS.md](MAC_ACCESS.md)).
+5. JWT broker remains runnable for deep policy demos without conflicting with `:8000`.
+
+## Handoff corrections already applied
+
+- Nova Carter USD path for Isaac Sim 6.0.1 under `Robots/NVIDIA/`.
+- Explicit Isaac service script (fake robot ambiguity removed).
+- Scenario catalog API + browser scenario runner.
+- LLM provider disclosure + OpenAI/Bedrock optional path with deterministic fallback.
+- Honest README status (control path proven ≠ judge product complete until Mac UI + scenarios rehearsed).
 
 ## Do not build during the event
 

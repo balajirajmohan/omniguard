@@ -2,23 +2,16 @@
 mobile robot (Nova Carter), and drives it to whatever (x, y, speed) target the
 OmniGuard broker last approved via the CommandBridge HTTP server.
 
-IMPORTANT — written and reviewed against NVIDIA's documented Isaac Sim 6.0
-standalone-script patterns, but NOT executed on real hardware (this dev
-machine is macOS/Apple Silicon and Isaac Sim requires an RTX GPU on
-Windows/Ubuntu). Treat this as a strong starting point to run and debug on
-the cloud GPU box, not as verified-working code. Two things most likely to
-need adjustment on first run:
-  1. Asset paths (`get_assets_root_path()` + the warehouse/robot USD paths)
-     occasionally shift between Isaac Sim releases.
-  2. Movement here is kinematic (teleport toward target at a capped speed,
-     via set_world_pose) rather than physics-driven differential-drive wheel
-     control. That's deliberate for demo reliability — swap in a real
-     DifferentialController + WheeledRobot wheel-velocity loop only if you
-     have time to tune it, since wrong wheel radius/track-width constants
-     will make the robot drift or spin instead of tracking the target.
+Verified on AWS Isaac Sim 6.0.1 (L40S): warehouse loads, Nova Carter moves/stops
+via CommandBridge :8899 when OmniGuard sets OMNIGUARD_ROBOT_BACKEND=isaac.
 
-Run on the GPU host with Isaac Sim's own Python:
-    ./python.sh warehouse_robot_demo.py
+Movement is kinematic (capped step toward target) for demo reliability — not a
+validated fleet controller. Asset paths can still shift between Isaac releases.
+
+Run on the GPU host from a DCV terminal (needs DISPLAY), with Isaac's Python:
+    /opt/IsaacSim/python.sh /home/ubuntu/omniguard/isaac/warehouse_robot_demo.py
+
+Do not start a second Isaac GUI while this process owns the scene/bridge.
 """
 import math
 
@@ -39,12 +32,14 @@ from command_bridge import CommandBridge  # noqa: E402
 ROBOT_ID = "robot-01"
 ROBOT_PRIM_PATH = "/World/NovaCarter"
 
-# Same three zones OmniGuard's policy engine reasons about. Coordinates are
-# placeholders — nudge them once you can see the actual warehouse layout.
+# Zones used by backend/actuation.py and the four-button demo.
 ZONE_WAYPOINTS = {
+    "SAFE_ZONE_A": (0.0, 0.0),
+    "SAFE_ZONE_B": (10.0, 4.0),
     "ZONE_A": (0.0, 0.0),
     "ZONE_B": (10.0, 4.0),
-    "HUMAN_ZONE": (2.0, 1.0),
+    "RESTRICTED_ZONE": (6.0, 8.0),
+    "HUMAN_ZONE": (6.0, 8.0),
 }
 
 MAX_STEP_SPEED = 2.0  # m/s safety cap regardless of what a command requests
@@ -62,7 +57,10 @@ def main():
     warehouse_usd = assets_root_path + "/Isaac/Environments/Simple_Warehouse/warehouse.usd"
     add_reference_to_stage(usd_path=warehouse_usd, prim_path="/World/Warehouse")
 
-    nova_carter_usd = assets_root_path + "/Isaac/Robots/NovaCarter/nova_carter.usd"
+    # Isaac Sim 6.0.1 catalogs Nova Carter under Robots/NVIDIA/ (not Robots/NovaCarter).
+    nova_carter_usd = (
+        assets_root_path + "/Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd"
+    )
     add_reference_to_stage(usd_path=nova_carter_usd, prim_path=ROBOT_PRIM_PATH)
 
     world.reset()
