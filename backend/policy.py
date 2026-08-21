@@ -95,7 +95,7 @@ def decide(
             "policy_decision": "DENY",
             "actions": [
                 "COMMAND_REJECTED",
-                "ROBOT_STOPPED",
+                "CONTAINMENT_REQUESTED",
                 "CREDENTIAL_REVOKED",
                 "AGENT_QUARANTINED",
             ],
@@ -118,7 +118,7 @@ def decide(
             "policy_decision": "REVIEW_AI_RISK",
             "actions": [
                 "COMMAND_REJECTED",
-                "ROBOT_STOPPED",
+                "CONTAINMENT_REQUESTED",
                 "CREDENTIAL_REVOKED",
                 "AGENT_QUARANTINED",
                 "AI_ANOMALY_CONTAINMENT",
