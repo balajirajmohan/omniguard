@@ -27,11 +27,12 @@ def test_zone_visual_layouts_match_authoritative_teleop_zones() -> None:
         "RESTRICTED_ZONE",
     ]
     assert layouts[0].label == "SAFE ZONE A"
-    assert layouts[0].waypoint == (0.0, -1.0)
-    assert layouts[1].waypoint == (8.0, -1.0)
-    assert layouts[2].waypoint == (6.0, 5.0)
-    assert layouts[0].y_max == 2.0
-    assert layouts[2].y_max == 7.5
+    assert layouts[0].waypoint == (-1.0, 8.0)
+    assert layouts[1].waypoint == (-1.0, 0.0)
+    assert layouts[2].waypoint == (5.5, 4.0)
+    assert layouts[0].y_max == 12.0
+    assert layouts[2].y_max == 12.0
+    assert layouts[2].y_min == -4.0
     assert layouts[2].restricted is True
     assert hazard_stripe_polygons(layouts[2])
     assert not hazard_stripe_polygons(layouts[0])

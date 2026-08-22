@@ -45,11 +45,11 @@ def test_teleop_config_zones_and_boundaries():
     assert cfg["deadman_timeout_ms"] == 750
     assert "SAFE_ZONE_A" in cfg["zones"]
     assert "RESTRICTED_ZONE" in cfg["zones"]
-    assert classify_point(6.0, 5.0) == "RESTRICTED_ZONE"
-    assert classify_point(4.0, 0.0) == "SAFE_ZONE_A"
-    assert classify_point(4.01, 0.0) == "SAFE_ZONE_B"
-    assert classify_point(0.0, 2.1) == "OUT_OF_BOUNDS"
-    assert classify_point(2.0, 2.5) == "RESTRICTED_ZONE"
+    assert classify_point(5.5, 4.0) == "RESTRICTED_ZONE"
+    assert classify_point(-1.0, 4.0) == "SAFE_ZONE_A"
+    assert classify_point(-1.0, 3.99) == "SAFE_ZONE_B"
+    assert classify_point(-1.0, 12.1) == "OUT_OF_BOUNDS"
+    assert classify_point(2.5, 0.0) == "RESTRICTED_ZONE"
 
 
 def test_legitimate_start_issues_shadow_lease_even_if_risk_elevated():
@@ -107,15 +107,15 @@ def test_safe_move_reaches_bridge_adapter(monkeypatch):
             "control_id": start["control_id"],
             "sequence": 1,
             "robot_id": "robot-01",
-            "x": 3.2,
-            "y": 1.7,
+            "x": 1.0,
+            "y": 6.0,
             "speed": 0.8,
         },
     ).json()
     assert move["status"] in {"QUEUED", "EXECUTED"}
     assert move["command_id"] == "bridge-cmd-1"
     assert move["zone"] == "SAFE_ZONE_A"
-    assert calls and calls[0][1:] == (3.2, 1.7, 0.8)
+    assert calls and calls[0][1:] == (1.0, 6.0, 0.8)
 
 
 def test_bridge_failure_surfaced(monkeypatch):
@@ -419,14 +419,14 @@ def test_state_exposes_physical_position():
             "control_id": start["control_id"],
             "sequence": 1,
             "robot_id": "robot-01",
-            "x": 3.0,
+            "x": 1.0,
             "y": 2.0,
             "speed": 0.7,
         },
     )
     state = client.get("/api/state").json()
     pos = state["isaac_bridge_state"]["position"]
-    assert math.isclose(pos["x"], 3.0)
+    assert math.isclose(pos["x"], 1.0)
     assert math.isclose(pos["y"], 2.0)
 
 

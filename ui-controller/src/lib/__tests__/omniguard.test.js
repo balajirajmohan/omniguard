@@ -298,30 +298,30 @@ describe("zones and speed (display only — backend is authoritative)", () => {
   const zones = OG.FALLBACK_TELEOP_CONFIG.zones;
 
   it("resolves restricted before safe on overlap", () => {
-    expect(OG.zoneAt(0, 0, zones)).toBe("SAFE_ZONE_A");
-    expect(OG.zoneAt(7.5, 0, zones)).toBe("SAFE_ZONE_B");
-    expect(OG.zoneAt(6, 5, zones)).toBe("RESTRICTED_ZONE");
-    expect(OG.zoneAt(2, 2.5, zones)).toBe("RESTRICTED_ZONE");
+    expect(OG.zoneAt(-1, 8, zones)).toBe("SAFE_ZONE_A");
+    expect(OG.zoneAt(0, 0, zones)).toBe("SAFE_ZONE_B");
+    expect(OG.zoneAt(5.5, 4, zones)).toBe("RESTRICTED_ZONE");
+    expect(OG.zoneAt(2.5, 0, zones)).toBe("RESTRICTED_ZONE");
   });
 
   it("treats anything off the map as out of bounds", () => {
     expect(OG.zoneAt(13, 0, zones)).toBe("OUT_OF_BOUNDS");
-    expect(OG.zoneAt(0, 2.1, zones)).toBe("OUT_OF_BOUNDS");
+    expect(OG.zoneAt(-1, 12.1, zones)).toBe("OUT_OF_BOUNDS");
   });
 
   it("derives autonomous waypoints from advertised zone geometry", () => {
-    expect(OG.zoneCenter(zones, "SAFE_ZONE_A")).toEqual({x: 0, y: -1});
-    expect(OG.zoneCenter(zones, "SAFE_ZONE_B")).toEqual({x: 8, y: -1});
+    expect(OG.zoneCenter(zones, "SAFE_ZONE_A")).toEqual({x: -1, y: 8});
+    expect(OG.zoneCenter(zones, "SAFE_ZONE_B")).toEqual({x: -1, y: 0});
     expect(OG.zoneCenter(zones, "MISSING")).toBeNull();
   });
 
   it("derives a clockwise Zone A patrol with clearance from every boundary", () => {
     const route = OG.zonePerimeter(zones, "SAFE_ZONE_A");
     expect(route).toEqual([
-      {id: "south-west", label: "south-west corner", x: -3.25, y: -3.25},
-      {id: "south-east", label: "south-east corner", x: 3.25, y: -3.25},
-      {id: "north-east", label: "north-east corner", x: 3.25, y: 1.25},
-      {id: "north-west", label: "north-west corner", x: -3.25, y: 1.25},
+      {id: "south-west", label: "south-west corner", x: -3.25, y: 4.75},
+      {id: "south-east", label: "south-east corner", x: 1.25, y: 4.75},
+      {id: "north-east", label: "north-east corner", x: 1.25, y: 11.25},
+      {id: "north-west", label: "north-west corner", x: -3.25, y: 11.25},
     ]);
     expect(
       route.every(
