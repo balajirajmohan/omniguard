@@ -91,9 +91,9 @@ export const FALLBACK_TELEOP_CONFIG = {
   deadman_timeout_ms: 750,
   lease_ttl_seconds: 30,
   zones: {
-    SAFE_ZONE_A: {x_min: -4, x_max: 4, y_min: -4, y_max: 2},
-    SAFE_ZONE_B: {x_min: 4, x_max: 12, y_min: -4, y_max: 2},
-    RESTRICTED_ZONE: {x_min: 2, x_max: 10, y_min: 2.5, y_max: 7.5},
+    SAFE_ZONE_A: {x_min: -4, x_max: 2, y_min: 4, y_max: 12},
+    SAFE_ZONE_B: {x_min: -4, x_max: 2, y_min: -4, y_max: 4},
+    RESTRICTED_ZONE: {x_min: 2.5, x_max: 8.5, y_min: -4, y_max: 12},
   },
 };
 
