@@ -93,18 +93,30 @@ visual/MOVE/STOP acceptance checks.
 
 ## Optional LLM explanation
 
+Default on `main` is **fallback** (deterministic template). Live LLM is off until
+you set a provider in local `.env` (never commit real keys — `.env` is gitignored).
+
 ```bash
-# .env / shell — never commit keys
-export LLM_PROVIDER=openai          # or bedrock | fallback
-export OPENAI_API_KEY=...
-export OPENAI_MODEL=gpt-4o-mini
+# Hackathon OpenRouter — OmniGuard team (Claude Sonnet 4.6)
+cp .env.example .env
+# Edit .env on the machine only:
+#   LLM_PROVIDER=openrouter
+#   OPENROUTER_API_KEY=<your team key>
+#   OPENROUTER_MODEL=anthropic.claude-sonnet-4-6
+
+# Direct OpenAI:
+# export LLM_PROVIDER=openai
+# export OPENAI_API_KEY=...
+# export OPENAI_MODEL=gpt-4o-mini
+
 # Bedrock:
 # export LLM_PROVIDER=bedrock
 # export BEDROCK_MODEL_ID=...
 # export AWS_REGION=...
 ```
 
-UI discloses provider/model and whether fallback was used.
+UI discloses provider/model and whether fallback was used. The LLM only explains
+incidents after containment; it never moves the robot.
 
 ## JWT broker (preserved)
 
