@@ -37,6 +37,9 @@ DEADMAN_TIMEOUT_MS = int(os.getenv("TELEOP_DEADMAN_TIMEOUT_MS", "750"))
 MAX_STREAM_HZ = 10
 MIN_PACKET_INTERVAL_S = 1.0 / MAX_STREAM_HZ
 
+STOP_CONFIRMED_STAGES = {"EXECUTED", "MOCK_CONFIRMED"}
+STOP_ACCEPTED_STAGES = {"EXECUTED", "QUEUED", "MOCK_CONFIRMED", "MOCK_SKIPPED"}
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -49,6 +52,75 @@ def _finite(value: float, name: str) -> float:
     if not math.isfinite(number):
         raise ValueError(f"{name} must be finite")
     return number
+
+
+def classify_hold_stop(
+    actuation: ActuationResult | None,
+    *,
+    telemetry_confirms_stopped: bool = False,
+) -> dict[str, Any]:
+    """Map an E-stop attempt into truthful HOLD pause fields.
+
+    robot_stopped is always identical to stop_confirmed.
+    """
+    stop_requested = True
+    if actuation is None:
+        # Mock backend: no Isaac call; confirmation comes from local mock state update.
+        return {
+            "status": "PAUSED_FOR_REVIEW",
+            "stop_requested": True,
+            "stop_request_accepted": True,
+            "stop_confirmed": True,
+            "robot_stopped": True,
+            "stop_stage": "MOCK_CONFIRMED",
+            "stop_ack": {"ok": True, "stage": "MOCK_SKIPPED", "command_id": None},
+            "runtime_robot_status": "STOPPED",
+            "apply_mock_stopped": True,
+        }
+
+    ack = actuation.to_dict()
+    stage = str(actuation.stage or "FAILED")
+    accepted = bool(actuation.ok) and stage in {"EXECUTED", "QUEUED"}
+    if stage == "EXECUTED" and actuation.ok:
+        confirmed = True
+        status = "PAUSED_FOR_REVIEW"
+        stop_stage = "EXECUTED"
+        runtime = "STOPPED"
+        apply_mock = True
+    elif stage == "QUEUED" and actuation.ok:
+        if telemetry_confirms_stopped:
+            confirmed = True
+            status = "PAUSED_FOR_REVIEW"
+            stop_stage = "QUEUED"
+            runtime = "STOPPED"
+            apply_mock = True
+        else:
+            confirmed = False
+            status = "PAUSE_STOP_PENDING"
+            stop_stage = "QUEUED"
+            runtime = "STOP_UNCONFIRMED"
+            apply_mock = False
+    else:
+        confirmed = False
+        accepted = False
+        status = "PAUSE_STOP_FAILED"
+        stop_stage = "FAILED"
+        runtime = "STOP_UNCONFIRMED"
+        apply_mock = False
+        if stage not in {"FAILED", "QUEUED", "EXECUTED"}:
+            stop_stage = "UNVERIFIED"
+
+    return {
+        "status": status,
+        "stop_requested": stop_requested,
+        "stop_request_accepted": accepted,
+        "stop_confirmed": confirmed,
+        "robot_stopped": confirmed,
+        "stop_stage": stop_stage,
+        "stop_ack": ack,
+        "runtime_robot_status": runtime,
+        "apply_mock_stopped": apply_mock,
+    }
 
 
 @dataclass
@@ -80,8 +152,9 @@ class TeleopManager:
         get_security_state: Callable[[], dict[str, Any]],
         apply_containment: Callable[[str, list[str]], None],
         append_event: Callable[[dict[str, Any]], None],
-        update_mock_pose: Callable[[float, float, float, str | None], None] | None = None,
+        update_mock_pose: Callable[..., None] | None = None,
         update_mock_manipulator: Callable[..., None] | None = None,
+        set_runtime_state: Callable[..., None] | None = None,
     ) -> None:
         self._lock = threading.RLock()
         self._leases: dict[str, TeleopLease] = {}  # robot_id -> lease
@@ -91,6 +164,7 @@ class TeleopManager:
         self._append_event = append_event
         self._update_mock_pose = update_mock_pose
         self._update_mock_manipulator = update_mock_manipulator
+        self._set_runtime_state = set_runtime_state
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._deadman_loop, name="teleop-deadman", daemon=True
@@ -154,34 +228,77 @@ class TeleopManager:
             enrichment["incident_id"] = incident.get("incident_id")
 
         if decision.final_decision == "HOLD":
-            # Fail-safe: stop motion before deactivating the lease. Credentials
-            # stay active — HOLD is pause-for-review, not compromise containment.
+            # Rejected command never reaches the Isaac action adapter (caller
+            # returns before maybe_actuate_*). Attempt authenticated stop, then
+            # deactivate the lease. Credentials stay active.
             stop = maybe_actuate_stop(lease.robot_id)
-            if self._update_mock_pose is not None:
+            telemetry_stopped = self._telemetry_confirms_base_stopped(
+                self._get_security_state()
+            )
+            classified = classify_hold_stop(
+                stop, telemetry_confirms_stopped=telemetry_stopped
+            )
+
+            if classified["apply_mock_stopped"] and self._update_mock_pose is not None:
                 self._update_mock_pose(
                     keep_position=True,
                     speed=0.0,
-                    command_id=stop.command_id if stop else None,
+                    command_id=(stop.command_id if stop else None),
                     motion_state="STOPPED",
                 )
+            elif self._set_runtime_state is not None:
+                # Do not invent a zero speed when Isaac stop is unconfirmed.
+                self._set_runtime_state(
+                    robot_status=classified["runtime_robot_status"],
+                )
+
+            if classified["apply_mock_stopped"] and self._set_runtime_state is not None:
+                self._set_runtime_state(
+                    robot_status=classified["runtime_robot_status"],
+                    robot_speed=0.0,
+                )
+
             with self._lock:
                 lease.active = False
-            enrichment["status"] = "PAUSED_FOR_REVIEW"
+
+            enrichment["status"] = classified["status"]
             enrichment["reasons"] = [
                 "AI_HOLD",
-                "PAUSED_FOR_REVIEW",
+                classified["status"],
                 decision.response_playbook or "SUSPICIOUS_SESSION",
             ]
+            if not classified["stop_confirmed"]:
+                enrichment["reasons"].append("STOP_UNCONFIRMED")
             enrichment["reasons"] = [r for r in enrichment["reasons"] if r]
             enrichment["control_id"] = lease.control_id
             enrichment["robot_id"] = lease.robot_id
-            enrichment["robot_stopped"] = True
-            enrichment["stop_ack"] = (
-                stop.to_dict()
-                if stop is not None
-                else {"ok": True, "stage": "MOCK_SKIPPED", "command_id": None}
-            )
+            enrichment["stop_requested"] = classified["stop_requested"]
+            enrichment["stop_request_accepted"] = classified["stop_request_accepted"]
+            enrichment["stop_confirmed"] = classified["stop_confirmed"]
+            enrichment["robot_stopped"] = classified["robot_stopped"]
+            enrichment["stop_stage"] = classified["stop_stage"]
+            enrichment["stop_ack"] = classified["stop_ack"]
             enrichment["credential_revoked"] = False
+            enrichment["agent_quarantined"] = False
+
+            if incident and incident.get("incident_id"):
+                from backend.incident_store import incident_store
+
+                evidence = dict(incident.get("ai_evidence") or {})
+                evidence["hold_stop"] = {
+                    "stop_requested": classified["stop_requested"],
+                    "stop_request_accepted": classified["stop_request_accepted"],
+                    "stop_confirmed": classified["stop_confirmed"],
+                    "robot_stopped": classified["robot_stopped"],
+                    "stop_stage": classified["stop_stage"],
+                    "stop_ack": classified["stop_ack"],
+                    "status": classified["status"],
+                }
+                incident_store.update_fields(
+                    incident["incident_id"],
+                    ai_evidence_json=evidence,
+                )
+
             self._append_event(
                 {
                     "timestamp": _utcnow().isoformat(),
@@ -190,7 +307,13 @@ class TeleopManager:
                     "control_id": lease.control_id,
                     "final_decision": "HOLD",
                     "decision_source": decision.decision_source,
-                    "actions": ["ROBOT_ESTOP_REQUESTED", "PAUSED_FOR_REVIEW"],
+                    "status": classified["status"],
+                    "stop_stage": classified["stop_stage"],
+                    "stop_confirmed": classified["stop_confirmed"],
+                    "actions": [
+                        "ROBOT_ESTOP_REQUESTED",
+                        classified["status"],
+                    ],
                 }
             )
             return False, enrichment
@@ -208,6 +331,24 @@ class TeleopManager:
             enrichment["robot_id"] = lease.robot_id
             return False, enrichment
         return True, enrichment
+
+    def _telemetry_confirms_base_stopped(self, security: dict[str, Any]) -> bool:
+        bridge = (
+            security.get("isaac_bridge_state")
+            or security.get("mock_bridge_state")
+            or {}
+        )
+        try:
+            speed = float(security.get("robot_speed", bridge.get("speed", 1.0)))
+        except (TypeError, ValueError):
+            return False
+        motion = bridge.get("motion_state") or security.get("robot_status")
+        return speed == 0.0 and motion in {
+            "STOPPED",
+            "IDLE",
+            "STOWED",
+            "CONTAINED",
+        }
 
     def start(self, payload: dict[str, Any]) -> dict[str, Any]:
         credential = str(payload.get("credential", ""))

@@ -96,7 +96,8 @@ class AIResponseEngine:
         incident = None
         if decision.requires_incident or decision.final_decision in {"BLOCK", "HOLD"}:
             fingerprint = (
-                f"{context.credential_fingerprint}|{context.device_id}|"
+                f"{context.demo_run_id}|{context.credential_fingerprint}|"
+                f"{context.device_id}|"
                 f"{decision.response_playbook or decision.decision_source}"
             )
             incident = incident_store.open_or_correlate(
@@ -121,6 +122,7 @@ class AIResponseEngine:
                 policy_version=risk_policy.version,
                 playbook=decision.response_playbook,
                 decision_source=decision.decision_source,
+                demo_run_id=context.demo_run_id,
                 window_seconds=int(
                     (risk_policy.raw.get("incident") or {}).get(
                         "correlation_window_seconds", 120

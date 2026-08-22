@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -60,6 +61,7 @@ def initial_state() -> dict[str, Any]:
         "robot_status": "STOPPED",
         "robot_zone": "SAFE_ZONE_A",
         "robot_speed": 0.0,
+        "demo_run_id": str(uuid.uuid4()),
         "events": [],
         "command_queue": [{"action": "RESET"}],
         "last_containment_ack": None,
@@ -187,7 +189,25 @@ def _security_snapshot() -> dict[str, Any]:
             "credential_status": STATE["credential_status"],
             "agent_status": STATE["agent_status"],
             "robot_status": STATE["robot_status"],
+            "robot_speed": STATE["robot_speed"],
+            "isaac_bridge_state": STATE.get("isaac_bridge_state"),
+            "mock_bridge_state": STATE.get("mock_bridge_state"),
         }
+
+
+def _set_runtime_state(**fields: Any) -> None:
+    """Update selected runtime fields without inventing motion confirmation."""
+    allowed = {
+        "robot_status",
+        "robot_speed",
+        "credential_status",
+        "agent_status",
+        "last_containment_ack",
+    }
+    with _LOCK:
+        for key, value in fields.items():
+            if key in allowed:
+                STATE[key] = value
 
 
 def _apply_containment(robot_id: str, actions: list[str]) -> None:
@@ -272,6 +292,7 @@ teleop_manager = TeleopManager(
     append_event=_append_teleop_event,
     update_mock_pose=_update_mock_pose,
     update_mock_manipulator=_update_mock_manipulator,
+    set_runtime_state=_set_runtime_state,
 )
 
 from backend.action_history import action_history

@@ -80,13 +80,23 @@ class IncidentStore:
                         human_feedback_json TEXT,
                         recovery_json TEXT,
                         playbook TEXT,
-                        decision_source TEXT
+                        decision_source TEXT,
+                        demo_run_id TEXT
                     )
                     """
                 )
+                self._migrate_demo_run_id(conn)
                 conn.commit()
             finally:
                 conn.close()
+
+    def _migrate_demo_run_id(self, conn: sqlite3.Connection) -> None:
+        cols = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(incidents)").fetchall()
+        }
+        if "demo_run_id" not in cols:
+            conn.execute("ALTER TABLE incidents ADD COLUMN demo_run_id TEXT")
 
     def reset_demo_state(self) -> None:
         with self._lock:
@@ -111,8 +121,11 @@ class IncidentStore:
         policy_version: str | None,
         playbook: str | None,
         decision_source: str | None,
+        demo_run_id: str,
         window_seconds: int = 120,
     ) -> dict[str, Any]:
+        if not demo_run_id:
+            raise ValueError("demo_run_id is required for new incidents")
         now = _utcnow()
         with self._lock:
             conn = self._connect()
@@ -121,10 +134,11 @@ class IncidentStore:
                     """
                     SELECT * FROM incidents
                     WHERE correlation_fingerprint = ?
+                      AND demo_run_id = ?
                       AND status IN ('OPEN','CONTAINED','INVESTIGATING','AWAITING_VERIFICATION')
                     ORDER BY last_event_at DESC LIMIT 1
                     """,
-                    (fingerprint,),
+                    (fingerprint, demo_run_id),
                 ).fetchone()
                 if row:
                     last = datetime.fromisoformat(row["last_event_at"])
@@ -165,9 +179,10 @@ class IncidentStore:
                       agent_id, device_id, robot_id,
                       action_sequence_json, hard_policy_json, ai_evidence_json,
                       model_version, policy_version, playbook, decision_source,
+                      demo_run_id,
                       containment_json, agent_trace_json, llm_explanation_json,
                       human_feedback_json, recovery_json
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,NULL,NULL)
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,NULL,NULL)
                     """,
                     (
                         incident_id,
@@ -186,6 +201,7 @@ class IncidentStore:
                         policy_version,
                         playbook,
                         decision_source,
+                        demo_run_id,
                     ),
                 )
                 conn.commit()
@@ -203,6 +219,7 @@ class IncidentStore:
             "llm_explanation_json",
             "human_feedback_json",
             "recovery_json",
+            "ai_evidence_json",
         }
         sets = []
         values: list[Any] = []

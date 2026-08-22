@@ -1,8 +1,10 @@
 """Allowlisted deterministic containment — LLMs never call this directly.
 
-Physical truth: the authenticated Isaac bridge /stop clears queued motion and
-stops the base. It does NOT prove arm halt or a safe gripper pose. Those remain
-REQUESTED/UNVERIFIED until explicit telemetry confirms them.
+Physical truth rules for authenticated /stop:
+- QUEUED: request accepted; does NOT prove the base physically stopped.
+- EXECUTED / mock confirmed: base stop intent completed for STOP_BASE.
+- FAILED: request not accepted.
+- STOP_ARM / SAFE_GRIPPER: never proved by generic /stop alone.
 """
 
 from __future__ import annotations
@@ -25,9 +27,7 @@ ALLOWED_OPERATIONS = {
     "QUARANTINE_AGENT",
 }
 
-# Operations that a generic /stop can honestly satisfy when the bridge accepts it.
-ESTOP_PROVES = {"ROBOT_ESTOP_REQUESTED", "STOP_BASE"}
-# Require explicit manipulator telemetry before these can be acknowledged.
+ESTOP_OPS = {"ROBOT_ESTOP_REQUESTED", "STOP_BASE"}
 NEEDS_TELEMETRY = {"STOP_ARM", "SAFE_GRIPPER"}
 
 PLAYBOOKS: dict[str, list[str]] = {
@@ -163,25 +163,41 @@ class ContainmentExecutor:
                 attempted.append("REJECT_COMMAND")
                 acknowledged.append("REJECT_COMMAND")
 
-            needs_estop = bool(set(ops) & (ESTOP_PROVES | NEEDS_TELEMETRY))
+            needs_estop = bool(set(ops) & (ESTOP_OPS | NEEDS_TELEMETRY))
             if needs_estop:
                 for op in ops:
-                    if op in ESTOP_PROVES or op in NEEDS_TELEMETRY:
+                    if op in ESTOP_OPS or op in NEEDS_TELEMETRY:
                         if op not in attempted:
                             attempted.append(op)
                 actuation = maybe_actuate_stop(robot_id)
                 ack = self._ack_from_actuation(actuation)
                 bridge_acks.append(ack)
-                estop_ok = ack.get("stage") in {"EXECUTED", "QUEUED", "MOCK_SKIPPED"} and ack.get(
-                    "ok", True
-                )
-                if estop_ok:
-                    # Honest claim: we requested an authenticated robot E-stop and
-                    # the bridge accepted/queued it (or mock skipped). That proves
-                    # base stop intent — not arm/gripper safe state.
+                stage = str(ack.get("stage") or "FAILED")
+
+                if stage == "FAILED" or ack.get("ok") is False:
                     if "ROBOT_ESTOP_REQUESTED" in ops:
+                        failed.append("ROBOT_ESTOP_REQUESTED")
+                    if "STOP_BASE" in ops:
+                        failed.append("STOP_BASE")
+                    for op in NEEDS_TELEMETRY:
+                        if op in ops:
+                            unverified.append(op)
+                elif stage == "QUEUED":
+                    # Accepted request only — not physical base stop proof.
+                    if "ROBOT_ESTOP_REQUESTED" in ops or "STOP_BASE" in ops:
                         acknowledged.append("ROBOT_ESTOP_REQUESTED")
-                    elif "STOP_BASE" in ops:
+                    if "STOP_BASE" in ops:
+                        unverified.append("STOP_BASE")
+                    for op in NEEDS_TELEMETRY:
+                        if op not in ops:
+                            continue
+                        if self._telemetry_confirms(op):
+                            acknowledged.append(op)
+                        else:
+                            unverified.append(op)
+                else:
+                    # EXECUTED, MOCK_SKIPPED / mock-confirmed: base stop proved.
+                    if "ROBOT_ESTOP_REQUESTED" in ops or "STOP_BASE" in ops:
                         acknowledged.append("ROBOT_ESTOP_REQUESTED")
                     if "STOP_BASE" in ops:
                         acknowledged.append("STOP_BASE")
@@ -192,11 +208,6 @@ class ContainmentExecutor:
                             acknowledged.append(op)
                         else:
                             unverified.append(op)
-                else:
-                    failed.append("ROBOT_ESTOP_REQUESTED")
-                    for op in ops:
-                        if op in ESTOP_PROVES or op in NEEDS_TELEMETRY:
-                            failed.append(op)
 
         result = {
             "ok": not failed,
@@ -212,8 +223,9 @@ class ContainmentExecutor:
             "failed": failed,
             "bridge_acknowledgements": bridge_acks,
             "note": (
-                "ROBOT_ESTOP_REQUESTED/STOP_BASE reflect authenticated /stop. "
-                "STOP_ARM and SAFE_GRIPPER stay UNVERIFIED without manipulator telemetry."
+                "QUEUED acknowledges ROBOT_ESTOP_REQUESTED only; STOP_BASE stays "
+                "unverified until EXECUTED/mock confirmation. STOP_ARM and "
+                "SAFE_GRIPPER require explicit manipulator telemetry."
             ),
             "at": datetime.now(timezone.utc).isoformat(),
         }
@@ -241,14 +253,20 @@ class ContainmentExecutor:
                 "stage": "MOCK_SKIPPED",
                 "command_id": None,
                 "ok": True,
-                "proves": sorted(ESTOP_PROVES),
+                "proves": ["ROBOT_ESTOP_REQUESTED", "STOP_BASE"],
             }
+        stage = actuation.stage
+        proves: list[str] = []
+        if stage == "EXECUTED" and actuation.ok:
+            proves = ["ROBOT_ESTOP_REQUESTED", "STOP_BASE"]
+        elif stage == "QUEUED" and actuation.ok:
+            proves = ["ROBOT_ESTOP_REQUESTED"]
         return {
-            "stage": actuation.stage,
+            "stage": stage,
             "command_id": actuation.command_id,
             "ok": actuation.ok,
             "detail": actuation.detail,
-            "proves": sorted(ESTOP_PROVES),
+            "proves": proves,
         }
 
 

@@ -192,6 +192,327 @@ def test_containment_acks_are_truthful(monkeypatch):
     assert "SAFE_GRIPPER" in unverified
 
 
+def test_containment_queued_does_not_ack_stop_base(monkeypatch):
+    monkeypatch.setattr(
+        "backend.containment.maybe_actuate_stop",
+        lambda *_a, **_k: ActuationResult(True, "QUEUED", command_id="q"),
+    )
+    from backend.containment import ContainmentExecutor
+
+    result = ContainmentExecutor().execute(
+        playbook="UNSAFE_MANIPULATION_SEQUENCE",
+        robot_id="robot-01",
+        incident_id="inc-q",
+    )
+    acked = set(result["acknowledged"])
+    unverified = set(result["unverified"])
+    failed = set(result["failed"])
+    assert "ROBOT_ESTOP_REQUESTED" in acked
+    assert "STOP_BASE" not in acked
+    assert "STOP_BASE" in unverified
+    assert "STOP_ARM" in unverified
+    assert "SAFE_GRIPPER" in unverified
+    assert "STOP_ARM" not in acked
+    assert "SAFE_GRIPPER" not in acked
+    assert not failed
+    assert result["ok"] is True
+
+
+def test_containment_failed_marks_estop_failed(monkeypatch):
+    monkeypatch.setattr(
+        "backend.containment.maybe_actuate_stop",
+        lambda *_a, **_k: ActuationResult(False, "FAILED", command_id=None, detail="boom"),
+    )
+    from backend.containment import ContainmentExecutor
+
+    result = ContainmentExecutor().execute(
+        playbook="UNSAFE_MANIPULATION_SEQUENCE",
+        robot_id="robot-01",
+    )
+    assert result["ok"] is False
+    assert "ROBOT_ESTOP_REQUESTED" in result["failed"]
+    assert "STOP_BASE" in result["failed"]
+    assert "STOP_ARM" in result["unverified"]
+    assert "SAFE_GRIPPER" in result["unverified"]
+
+
+def _hold_decision() -> DecisionResult:
+    return DecisionResult(
+        final_decision="HOLD",
+        policy_decision="AI_HOLD",
+        decision_source="ai_warning",
+        hard_policy_would_block=False,
+        anomaly_risk_score=0.65,
+        behavioral_rule_score=0.0,
+        effective_risk=0.65,
+        requires_incident=True,
+        requires_containment=False,
+        requires_pause_stop=True,
+        requires_human_review=True,
+        response_playbook="SUSPICIOUS_SESSION",
+        ai_mode="enforce",
+    )
+
+
+def test_hold_mock_stop_confirmed(monkeypatch):
+    """Mock backend (None actuation) confirms via local mock state."""
+    monkeypatch.setattr(
+        "backend.teleop.maybe_actuate_move_xy",
+        lambda *_a, **_k: ActuationResult(True, "QUEUED", command_id="m"),
+    )
+    cid = _lease()
+    client.post(
+        "/api/teleop/move",
+        json={
+            "control_id": cid,
+            "sequence": 1,
+            "robot_id": "robot-01",
+            "x": 1.0,
+            "y": 0.0,
+            "speed": 0.8,
+        },
+    )
+    hold = _hold_decision()
+    monkeypatch.setattr(
+        "backend.ai_response.ai_engine.evaluate_action",
+        lambda **_kwargs: (hold, {"incident_id": "inc-hold-mock", "ai_evidence": {}}),
+    )
+    # Do not patch maybe_actuate_stop — mock backend returns None.
+    blocked = client.post(
+        "/api/teleop/move",
+        json={
+            "control_id": cid,
+            "sequence": 2,
+            "robot_id": "robot-01",
+            "x": 2.0,
+            "y": 0.0,
+            "speed": 0.8,
+        },
+    ).json()
+    assert blocked["status"] == "PAUSED_FOR_REVIEW"
+    assert blocked["final_decision"] == "HOLD"
+    assert blocked["stop_requested"] is True
+    assert blocked["stop_request_accepted"] is True
+    assert blocked["stop_confirmed"] is True
+    assert blocked["robot_stopped"] is True
+    assert blocked["robot_stopped"] == blocked["stop_confirmed"]
+    assert blocked["stop_stage"] == "MOCK_CONFIRMED"
+    assert blocked["credential_revoked"] is False
+    state = client.get("/api/state").json()
+    assert state["credential_status"] == "ACTIVE"
+    assert state["agent_status"] == "TRUSTED"
+    assert state["robot_speed"] == 0
+
+
+def test_hold_isaac_executed(monkeypatch):
+    stop_calls = []
+
+    def track_stop(robot_id):
+        stop_calls.append(robot_id)
+        return ActuationResult(True, "EXECUTED", command_id="hold-stop")
+
+    monkeypatch.setattr("backend.teleop.maybe_actuate_stop", track_stop)
+    monkeypatch.setattr(
+        "backend.teleop.maybe_actuate_move_xy",
+        lambda *_a, **_k: ActuationResult(True, "QUEUED", command_id="m"),
+    )
+    arm_calls = []
+    monkeypatch.setattr(
+        "backend.teleop.maybe_actuate_arm_preset",
+        lambda *_a, **_k: arm_calls.append("arm") or ActuationResult(True, "QUEUED", command_id="a"),
+    )
+
+    cid = _lease()
+    client.post(
+        "/api/teleop/move",
+        json={
+            "control_id": cid,
+            "sequence": 1,
+            "robot_id": "robot-01",
+            "x": 1.0,
+            "y": 0.0,
+            "speed": 0.8,
+        },
+    )
+    hold = _hold_decision()
+    monkeypatch.setattr(
+        "backend.ai_response.ai_engine.evaluate_action",
+        lambda **_kwargs: (hold, {"incident_id": "inc-hold-exec", "ai_evidence": {}}),
+    )
+    blocked = client.post(
+        "/api/teleop/arm/preset",
+        json={"control_id": cid, "robot_id": "robot-01", "preset": "reach"},
+    ).json()
+    assert blocked["status"] == "PAUSED_FOR_REVIEW"
+    assert blocked["stop_stage"] == "EXECUTED"
+    assert blocked["stop_requested"] is True
+    assert blocked["stop_request_accepted"] is True
+    assert blocked["stop_confirmed"] is True
+    assert blocked["robot_stopped"] is True
+    assert blocked["stop_ack"]["ok"] is True
+    assert blocked["stop_ack"]["stage"] == "EXECUTED"
+    assert arm_calls == []  # rejected action never reached adapter
+    assert stop_calls == ["robot-01"]
+    assert client.get("/api/state").json()["credential_status"] == "ACTIVE"
+
+
+def test_hold_isaac_queued(monkeypatch):
+    monkeypatch.setattr(
+        "backend.teleop.maybe_actuate_stop",
+        lambda *_a, **_k: ActuationResult(True, "QUEUED", command_id="q-stop"),
+    )
+    monkeypatch.setattr(
+        "backend.teleop.maybe_actuate_move_xy",
+        lambda *_a, **_k: ActuationResult(True, "QUEUED", command_id="m"),
+    )
+    cid = _lease()
+    client.post(
+        "/api/teleop/move",
+        json={
+            "control_id": cid,
+            "sequence": 1,
+            "robot_id": "robot-01",
+            "x": 1.0,
+            "y": 0.0,
+            "speed": 0.8,
+        },
+    )
+    speed_before = client.get("/api/state").json()["robot_speed"]
+    hold = _hold_decision()
+    monkeypatch.setattr(
+        "backend.ai_response.ai_engine.evaluate_action",
+        lambda **_kwargs: (hold, {"incident_id": "inc-hold-q", "ai_evidence": {}}),
+    )
+    blocked = client.post(
+        "/api/teleop/move",
+        json={
+            "control_id": cid,
+            "sequence": 2,
+            "robot_id": "robot-01",
+            "x": 2.0,
+            "y": 0.0,
+            "speed": 0.8,
+        },
+    ).json()
+    assert blocked["status"] == "PAUSE_STOP_PENDING"
+    assert blocked["stop_requested"] is True
+    assert blocked["stop_request_accepted"] is True
+    assert blocked["stop_confirmed"] is False
+    assert blocked["robot_stopped"] is False
+    assert blocked["robot_stopped"] == blocked["stop_confirmed"]
+    assert blocked["stop_stage"] == "QUEUED"
+    state = client.get("/api/state").json()
+    assert state["robot_status"] == "STOP_UNCONFIRMED"
+    assert state["robot_speed"] == speed_before
+
+
+def test_hold_isaac_failed_never_fakes_zero_speed(monkeypatch):
+    monkeypatch.setattr(
+        "backend.teleop.maybe_actuate_stop",
+        lambda *_a, **_k: ActuationResult(False, "FAILED", detail="estop failed"),
+    )
+    monkeypatch.setattr(
+        "backend.teleop.maybe_actuate_move_xy",
+        lambda *_a, **_k: ActuationResult(True, "QUEUED", command_id="m"),
+    )
+    cid = _lease()
+    client.post(
+        "/api/teleop/move",
+        json={
+            "control_id": cid,
+            "sequence": 1,
+            "robot_id": "robot-01",
+            "x": 1.0,
+            "y": 0.0,
+            "speed": 0.8,
+        },
+    )
+    speed_before = client.get("/api/state").json()["robot_speed"]
+    assert speed_before > 0
+    hold = _hold_decision()
+    monkeypatch.setattr(
+        "backend.ai_response.ai_engine.evaluate_action",
+        lambda **_kwargs: (
+            hold,
+            {"incident_id": "inc-hold-fail", "ai_evidence": {}},
+        ),
+    )
+    blocked = client.post(
+        "/api/teleop/move",
+        json={
+            "control_id": cid,
+            "sequence": 2,
+            "robot_id": "robot-01",
+            "x": 2.0,
+            "y": 0.0,
+            "speed": 0.8,
+        },
+    ).json()
+    assert blocked["status"] == "PAUSE_STOP_FAILED"
+    assert blocked["stop_requested"] is True
+    assert blocked["stop_request_accepted"] is False
+    assert blocked["stop_confirmed"] is False
+    assert blocked["robot_stopped"] is False
+    assert blocked["stop_stage"] == "FAILED"
+    assert blocked["stop_ack"]["ok"] is False
+    state = client.get("/api/state").json()
+    assert state["robot_status"] == "STOP_UNCONFIRMED"
+    assert state["robot_speed"] == speed_before
+    assert state["credential_status"] == "ACTIVE"
+
+
+def test_hold_queued_then_telemetry_confirms(monkeypatch):
+    monkeypatch.setattr(
+        "backend.teleop.maybe_actuate_stop",
+        lambda *_a, **_k: ActuationResult(True, "QUEUED", command_id="q2"),
+    )
+    monkeypatch.setattr(
+        "backend.teleop.maybe_actuate_move_xy",
+        lambda *_a, **_k: ActuationResult(True, "QUEUED", command_id="m"),
+    )
+    cid = _lease()
+    client.post(
+        "/api/teleop/move",
+        json={
+            "control_id": cid,
+            "sequence": 1,
+            "robot_id": "robot-01",
+            "x": 1.0,
+            "y": 0.0,
+            "speed": 0.8,
+        },
+    )
+    import backend.main as main_mod
+
+    with main_mod._LOCK:
+        main_mod.STATE["robot_speed"] = 0.0
+        main_mod.STATE["robot_status"] = "STOPPED"
+        main_mod.STATE["mock_bridge_state"]["speed"] = 0.0
+        main_mod.STATE["mock_bridge_state"]["motion_state"] = "STOPPED"
+
+    hold = _hold_decision()
+    monkeypatch.setattr(
+        "backend.ai_response.ai_engine.evaluate_action",
+        lambda **_kwargs: (hold, {"incident_id": "inc-hold-tel", "ai_evidence": {}}),
+    )
+    blocked = client.post(
+        "/api/teleop/move",
+        json={
+            "control_id": cid,
+            "sequence": 2,
+            "robot_id": "robot-01",
+            "x": 2.0,
+            "y": 0.0,
+            "speed": 0.8,
+        },
+    ).json()
+    assert blocked["status"] == "PAUSED_FOR_REVIEW"
+    assert blocked["stop_request_accepted"] is True
+    assert blocked["stop_confirmed"] is True
+    assert blocked["robot_stopped"] is True
+    assert blocked["stop_stage"] == "QUEUED"
+
+
 def test_hold_stops_robot_before_lease_inactive(monkeypatch):
     stop_calls = []
 
@@ -219,25 +540,10 @@ def test_hold_stops_robot_before_lease_inactive(monkeypatch):
     ).json()
     assert moving["status"] in {"EXECUTED", "QUEUED"}
 
-    hold = DecisionResult(
-        final_decision="HOLD",
-        policy_decision="AI_HOLD",
-        decision_source="ai_warning",
-        hard_policy_would_block=False,
-        anomaly_risk_score=0.65,
-        behavioral_rule_score=0.0,
-        effective_risk=0.65,
-        requires_incident=True,
-        requires_containment=False,
-        requires_pause_stop=True,
-        requires_human_review=True,
-        response_playbook="SUSPICIOUS_SESSION",
-        ai_mode="enforce",
-    )
-
+    hold = _hold_decision()
     monkeypatch.setattr(
         "backend.ai_response.ai_engine.evaluate_action",
-        lambda **_kwargs: (hold, {"incident_id": "inc-hold-test"}),
+        lambda **_kwargs: (hold, {"incident_id": "inc-hold-test", "ai_evidence": {}}),
     )
 
     blocked = client.post(
@@ -254,6 +560,7 @@ def test_hold_stops_robot_before_lease_inactive(monkeypatch):
     assert blocked["status"] == "PAUSED_FOR_REVIEW"
     assert blocked["final_decision"] == "HOLD"
     assert blocked.get("robot_stopped") is True
+    assert blocked.get("stop_confirmed") is True
     assert blocked.get("credential_revoked") is False
     assert blocked.get("stop_ack", {}).get("ok") is True
     assert stop_calls == ["robot-01"]
@@ -275,6 +582,7 @@ def test_hold_stops_robot_before_lease_inactive(monkeypatch):
     ).json()
     assert again["status"] == "REJECTED"
 
+
 def test_reset_preserves_incidents():
     result = client.post(
         "/api/scenarios/valid_identity_malicious_manipulation/run"
@@ -286,6 +594,150 @@ def test_reset_preserves_incidents():
     assert payload.get("incident_id") == iid
     listed = client.get("/api/incidents").json()
     assert any(i["incident_id"] == iid for i in listed)
+
+
+def test_demo_run_id_isolates_incidents_across_reset(monkeypatch):
+    result1 = client.post(
+        "/api/scenarios/valid_identity_malicious_manipulation/run"
+    ).json()
+    iid1 = result1["incident_id"]
+    assert iid1
+    inc1 = client.get(f"/api/incidents/{iid1}").json()
+    run1 = inc1["demo_run_id"]
+    assert run1
+
+    # Exhaust LLM call budget on first incident.
+    monkeypatch.setattr(
+        "backend.main.explain_incident",
+        lambda _event: {"fallback_used": True, "provider": "fallback", "summary": "x"},
+    )
+    inv1 = client.post(f"/api/incidents/{iid1}/investigate", headers=OP).json()
+    assert inv1["ok"] is True
+    inv1b = client.post(f"/api/incidents/{iid1}/investigate", headers=OP).json()
+    assert inv1b["ok"] is True
+    limited = client.post(f"/api/incidents/{iid1}/investigate", headers=OP).json()
+    assert limited["ok"] is False
+    assert limited["error"] == "LLM_CALL_LIMIT"
+
+    before_reset = client.get("/api/state").json()["demo_run_id"]
+    reset = client.post("/api/reset").json()
+    run_after_reset = reset["demo_run_id"]
+    assert run_after_reset != before_reset
+    assert run_after_reset != run1
+    state2 = client.get("/api/state").json()
+    assert state2["demo_run_id"] == run_after_reset
+
+    result2 = client.post(
+        "/api/scenarios/valid_identity_malicious_manipulation/run"
+    ).json()
+    iid2 = result2["incident_id"]
+    assert iid2 != iid1
+    inc2 = client.get(f"/api/incidents/{iid2}").json()
+    run2 = inc2["demo_run_id"]
+    assert run2
+    assert run2 != run1
+    assert run2 != run_after_reset  # scenario run resets again before creating incident
+
+    # Old incident remains queryable; both listed.
+    assert client.get(f"/api/incidents/{iid1}").json()["incident_id"] == iid1
+    listed = client.get("/api/incidents").json()
+    ids = {i["incident_id"] for i in listed}
+    assert iid1 in ids and iid2 in ids
+
+    # Second incident has a fresh LLM budget.
+    inv2 = client.post(f"/api/incidents/{iid2}/investigate", headers=OP).json()
+    assert inv2["ok"] is True
+    assert inv2["call_count"] == 1
+
+
+def test_sqlite_migrates_demo_run_id_without_data_loss(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "legacy_incidents.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        """
+        CREATE TABLE incidents (
+            incident_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            correlation_fingerprint TEXT,
+            first_event_at TEXT,
+            last_event_at TEXT,
+            event_count INTEGER DEFAULT 1,
+            agent_id TEXT,
+            device_id TEXT,
+            robot_id TEXT,
+            action_sequence_json TEXT,
+            hard_policy_json TEXT,
+            ai_evidence_json TEXT,
+            model_version TEXT,
+            policy_version TEXT,
+            containment_json TEXT,
+            agent_trace_json TEXT,
+            llm_explanation_json TEXT,
+            human_feedback_json TEXT,
+            recovery_json TEXT,
+            playbook TEXT,
+            decision_source TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO incidents (
+          incident_id, status, correlation_fingerprint,
+          first_event_at, last_event_at, event_count,
+          agent_id, device_id, robot_id,
+          action_sequence_json, hard_policy_json, ai_evidence_json,
+          model_version, policy_version, playbook, decision_source
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            "INC-LEGACY001",
+            "OPEN",
+            "legacy-fp",
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-01T00:00:00+00:00",
+            1,
+            "fleet-agent-01",
+            "fleet-controller-01",
+            "robot-01",
+            "[]",
+            "{}",
+            "{}",
+            "v1",
+            "v1",
+            "UNSAFE_MANIPULATION_SEQUENCE",
+            "behavioral_rule",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    store = IncidentStore(db)
+    legacy = store.get("INC-LEGACY001")
+    assert legacy is not None
+    assert legacy["demo_run_id"] is None
+    assert legacy["agent_id"] == "fleet-agent-01"
+
+    created = store.open_or_correlate(
+        fingerprint="new-fp",
+        agent_id="fleet-agent-01",
+        device_id="fleet-controller-01",
+        robot_id="robot-01",
+        action_event={"action_type": "ARM_PRESET"},
+        hard_policy={"would_block": False, "reasons": []},
+        ai_evidence={"anomaly_risk_score": 0.9},
+        model_version="v1",
+        policy_version="v1",
+        playbook="UNSAFE_MANIPULATION_SEQUENCE",
+        decision_source="behavioral_rule",
+        demo_run_id="run-migration-1",
+    )
+    assert created["demo_run_id"] == "run-migration-1"
+    assert store.get("INC-LEGACY001")["incident_id"] == "INC-LEGACY001"
+    blob = db.read_bytes()
+    assert b"fleet-agent-valid-token" not in blob
 
 
 def test_model_unavailable_keeps_hard_policy(monkeypatch):
@@ -339,6 +791,7 @@ def test_incident_correlation_and_persistence(tmp_path, monkeypatch):
         policy_version="action-risk-policy-v1",
         playbook="UNSAFE_MANIPULATION_SEQUENCE",
         decision_source="hybrid_rule_ml",
+        demo_run_id=first["demo_run_id"],
     )
     again = store.get(iid)
     assert again["event_count"] >= 2
@@ -433,13 +886,16 @@ def test_ai_status_contract():
 
 def test_concurrent_reset_teleop_no_deadlock():
     errors = []
+    run_ids = []
 
     def worker(i):
         try:
             if i % 2 == 0:
-                client.post("/api/reset")
+                payload = client.post("/api/reset").json()
+                run_ids.append(payload.get("demo_run_id"))
             else:
                 client.post("/api/teleop/start", json=LEGIT_START)
+                run_ids.append(client.get("/api/state").json().get("demo_run_id"))
         except Exception as exc:  # noqa: BLE001
             errors.append(exc)
 
@@ -449,3 +905,7 @@ def test_concurrent_reset_teleop_no_deadlock():
     for t in threads:
         t.join(timeout=5)
     assert not errors
+    assert all(rid for rid in run_ids)
+    # Final state has a single coherent demo_run_id.
+    final = client.get("/api/state").json()["demo_run_id"]
+    assert final

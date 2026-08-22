@@ -43,6 +43,7 @@ class ActionContext(BaseModel):
     device_id: str
     robot_id: str
     credential_fingerprint: str
+    demo_run_id: str
     action_type: ActionType
     action_payload: dict[str, Any] = Field(default_factory=dict)
     protection_enabled: bool = True
@@ -114,12 +115,17 @@ class ActionContextBuilder:
             source = "unknown"
 
         window = window or {}
+        demo_run_id = str(state.get("demo_run_id") or "")
+        if not demo_run_id:
+            # Tests / unbound builders: still require a non-empty run id on context.
+            demo_run_id = "unbound-demo-run"
         return ActionContext(
             session_id=session_id,
             agent_id=agent_id,
             device_id=device_id,
             robot_id=robot_id,
             credential_fingerprint=credential_fingerprint(credential),
+            demo_run_id=demo_run_id,
             action_type=action_type,
             action_payload=dict(action_payload or {}),
             protection_enabled=protection_enabled,
