@@ -9,7 +9,9 @@ import ScenarioPanel from './components/ScenarioPanel.jsx';
 import SettingsSheet from './components/SettingsSheet.jsx';
 import TopBar from './components/TopBar.jsx';
 import WarehouseMap from './components/WarehouseMap.jsx';
-import { loadConfig, saveConfig } from './lib/omniguard.js';
+import {
+  DEMO_CREDENTIAL, DEMO_OPERATOR_TOKEN, loadConfig, saveConfig,
+} from './lib/omniguard.js';
 import { useController } from './lib/useController.js';
 import { useKeyboardControl } from './lib/useKeyboardControl.js';
 import { useSessionLog } from './lib/useSessionLog.js';
@@ -30,7 +32,15 @@ export default function App() {
   useEffect(() => { logs.record(ctl.events); }, [ctl.events, logs]);
 
   const onSave = useCallback((next) => {
-    setCfg(next); saveConfig(next); setShowSettings(false);
+    /* Secrets stay in React memory only — never rely on settings draft/localStorage. */
+    const secured = {
+      ...next,
+      credential: DEMO_CREDENTIAL,
+      operatorToken: DEMO_OPERATOR_TOKEN,
+    };
+    setCfg(secured);
+    saveConfig(secured);
+    setShowSettings(false);
   }, []);
 
   /* Archive before the backend wipes its state, or the run just demonstrated
@@ -151,7 +161,7 @@ export default function App() {
                     <span className={keys.legit ? 'text-ok' : ''}>WASD</span>
                     <span className="text-faint">/</span>
                     <span className={keys.rogue ? 'text-bad' : ''}>arrows</span>
-                    <span className="text-faint">· d-pad arm · L1/R1 grip</span>
+                    <span className="text-faint">· d-pad arm · L1/L2 · R1/R2 grip</span>
                   </span>
                 </div>
                 <div className="min-h-0 flex-1">
