@@ -1,4 +1,4 @@
-import { Cpu, Gamepad2, Radio, RotateCcw, ScrollText, Settings, Shield, Zap } from 'lucide-react';
+import { Brain, Cpu, Gamepad2, Radio, RotateCcw, ScrollText, Settings, Shield, ShieldAlert, Zap } from 'lucide-react';
 
 function Tab({ active, onClick, icon: Icon, children }) {
   return (
@@ -15,7 +15,7 @@ function Tab({ active, onClick, icon: Icon, children }) {
 
 export default function TopBar({
   status, health, gatewayReady, view, onView, onReset, onToggleSettings,
-  pad, resetting, settingsOpen,
+  pad, resetting, settingsOpen, aiAvailable,
 }) {
   const online = status.online !== false && status.robot_status !== 'API DOWN';
   const ai = health?.anomaly;
@@ -39,6 +39,7 @@ export default function TopBar({
       <nav className="flex items-center gap-1 rounded-xl border border-line bg-sunken/70 p-1"
         aria-label="Views">
         <Tab active={view === 'console'} onClick={() => onView('console')} icon={Shield}>Console</Tab>
+        <Tab active={view === 'incidents'} onClick={() => onView('incidents')} icon={ShieldAlert}>Incidents</Tab>
         <Tab active={view === 'logs'} onClick={() => onView('logs')} icon={ScrollText}>Logs</Tab>
       </nav>
 
@@ -59,6 +60,16 @@ export default function TopBar({
           <Radio size={9} aria-hidden="true" />
           gateway {gatewayReady === true ? 'ready' : gatewayReady === false ? 'not deployed' : '…'}
         </span>
+
+        {/* AI service status */}
+        {aiAvailable != null && (
+          <span title={aiAvailable ? 'AI incident service available' : 'AI incident service not deployed'}
+            className={`chip ${aiAvailable ? 'border-ok/45 text-ok' : 'border-warn/45 text-warn'}`}
+            aria-label={aiAvailable ? 'AI service available' : 'AI service not deployed'}>
+            <Brain size={9} aria-hidden="true" />
+            AI {aiAvailable ? 'available' : 'not deployed'}
+          </span>
+        )}
 
         {ai && (
           <span title={`artifact ${ai.artifact_verified ? 'verified' : 'UNVERIFIED'} · ${ai.n_training_samples} samples`}
@@ -85,3 +96,4 @@ export default function TopBar({
     </header>
   );
 }
+
