@@ -1,4 +1,5 @@
 import {
+  Brain,
   Bot,
   Cpu,
   Gamepad2,
@@ -7,6 +8,7 @@ import {
   ScrollText,
   Settings,
   Shield,
+  ShieldAlert,
   Zap,
 } from "lucide-react";
 
@@ -42,6 +44,7 @@ export default function TopBar({
   settingsOpen,
   simulationOpen,
   simulationActive,
+  aiAvailable,
 }) {
   const online = status.online !== false && status.robot_status !== "API DOWN";
   const ai = health?.anomaly;
@@ -74,6 +77,12 @@ export default function TopBar({
           onClick={() => onView("console")}
           icon={Shield}>
           Live control
+        </Tab>
+        <Tab
+          active={view === "incidents"}
+          onClick={() => onView("incidents")}
+          icon={ShieldAlert}>
+          Incidents
         </Tab>
         <Tab
           active={view === "logs"}
@@ -116,6 +125,23 @@ export default function TopBar({
               ? "not deployed"
               : "…"}
         </span>
+
+        {/* AI service status */}
+        {aiAvailable != null && (
+          <span
+            title={
+              aiAvailable
+                ? "AI incident service available"
+                : "AI incident service not deployed"
+            }
+            className={`chip ${aiAvailable ? "border-ok/45 text-ok" : "border-warn/45 text-warn"}`}
+            aria-label={
+              aiAvailable ? "AI service available" : "AI service not deployed"
+            }>
+            <Brain size={9} aria-hidden="true" />
+            AI {aiAvailable ? "available" : "not deployed"}
+          </span>
+        )}
 
         {ai && (
           <span

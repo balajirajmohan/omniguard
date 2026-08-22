@@ -148,14 +148,30 @@ const CSV_COLUMNS = [
   ['final_decision', (e) => e.final_decision],
   ['policy_decision', (e) => e.policy_decision],
   ['caught_by', (e) => e.caught_by],
-  ['hard_policy_would_block', (e) => e.hard_policy_would_block],
-  ['anomaly_risk_score', (e) => e.anomaly_risk_score],
+  ['hard_policy_would_block', (e) => e.hard_policy_would_block ?? e.ai_evidence?.hard_policy_would_block],
+  ['anomaly_risk_score', (e) => e.anomaly_risk_score ?? e.ai_evidence?.anomaly_risk_score],
   ['agent_id', (e) => e.agent_id],
   ['device_id', (e) => e.device_id],
   ['destination', (e) => e.destination],
   ['speed', (e) => e.speed],
   ['reasons', (e) => (e.reasons ?? []).join(' ')],
   ['actions', (e) => (e.actions ?? []).join(' ')],
+  /* AI provenance & physical stop fields — appended, never removing existing columns. */
+  ['decision_source', (e) => e.decision_source ?? e.ai_evidence?.decision_source],
+  ['anomaly_model_version', (e) => e.anomaly_model_version ?? e.ai_evidence?.model_version],
+  ['ai_mode', (e) => e.ai_mode ?? e.ai_evidence?.ai_mode],
+  ['incident_id', (e) => e.incident_id],
+  ['response_playbook', (e) => e.response_playbook ?? e.playbook],
+  ['containment_ack', (e) => e.containment_ack],
+  ['demo_run_id', (e) => e.demo_run_id],
+  ['behavioral_rule_score', (e) => e.behavioral_rule_score ?? e.ai_evidence?.behavioral_rule_score],
+  ['effective_risk', (e) => e.effective_risk ?? e.ai_evidence?.effective_risk],
+  ['stop_requested', (e) => e.stop_requested],
+  ['stop_request_accepted', (e) => e.stop_request_accepted],
+  ['stop_confirmed', (e) => e.stop_confirmed],
+  ['robot_stopped', (e) => e.stop_confirmed === true], // NEVER true unless stop_confirmed === true
+  ['stop_stage', (e) => e.stop_stage],
+  ['stop_ack', (e) => e.stop_ack],
 ];
 
 /* Quote everything and double embedded quotes — reason strings are free text. */

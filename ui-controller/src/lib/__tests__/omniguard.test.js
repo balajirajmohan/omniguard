@@ -474,7 +474,8 @@ describe("session log export", () => {
     ]);
     expect(csv).toContain('"said ""no"", firmly"');
     // The embedded comma must not create an extra column.
-    expect(csv.split("\n")[1].split('","')).toHaveLength(12);
+    const [header, row] = csv.split("\n");
+    expect(row.split('\",\"')).toHaveLength(header.split('\",\"').length);
   });
 
   it("tolerates missing fields rather than writing undefined", async () => {

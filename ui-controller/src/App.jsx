@@ -2,6 +2,7 @@ import {useCallback, useEffect, useMemo, useState} from "react";
 import {Bot, Grab, Keyboard, PlugZap, Radar, ShieldAlert} from "lucide-react";
 import DecisionCard from "./components/DecisionCard.jsx";
 import DualSense from "./components/DualSense.jsx";
+import IncidentCenter from "./components/IncidentCenter.jsx";
 import InvestigatePanel from "./components/InvestigatePanel.jsx";
 import LogsView from "./components/LogsView.jsx";
 import PlaneCard from "./components/PlaneCard.jsx";
@@ -17,6 +18,7 @@ import {
   saveConfig,
 } from "./lib/omniguard.js";
 import {useController} from "./lib/useController.js";
+import {useIncidents} from "./lib/useIncidents.js";
 import {useKeyboardControl} from "./lib/useKeyboardControl.js";
 import {useSessionLog} from "./lib/useSessionLog.js";
 
@@ -29,6 +31,10 @@ export default function App() {
 
   const ctl = useController(cfg);
   const logs = useSessionLog();
+
+  /* Incident polling only runs when the Incidents view is active, so it never
+   * interferes with the teleop streaming in useController. */
+  const inc = useIncidents(cfg, {enabled: view === "incidents"});
 
   /* Window-level, so nothing has to be clicked before the keys work:
    * WASD drives the operator, arrow keys drive the hacker. */
@@ -113,6 +119,7 @@ export default function App() {
           setShowSettings(false);
           setShowSimulation((v) => !v);
         }}
+        aiAvailable={inc.aiAvailable}
       />
 
       {showSimulation && (
@@ -178,6 +185,17 @@ export default function App() {
           current={logs.current}
           onRemove={logs.removeSession}
           onClearAll={logs.clearAll}
+        />
+      ) : view === "incidents" ? (
+        <IncidentCenter
+          incidents={inc.incidents}
+          activeDetail={inc.activeDetail}
+          selectedId={inc.activeIncident}
+          onSelect={inc.selectIncident}
+          onRefresh={inc.refresh}
+          aiAvailable={inc.aiAvailable}
+          error={inc.error}
+          cfg={cfg}
         />
       ) : (
         <>

@@ -11,6 +11,10 @@ logs/
 .ruff_cache/
 .streamlit/secrets.toml
 
+# Durable incident store (local hackathon SQLite)
+data/omniguard_incidents.db
+data/*.db
+
 # Local starter kit / handoff PDFs (source material; not part of the app)
 OmniGuard_Starter_Kit*/
 OmniGuard_*Handoff*.pdf

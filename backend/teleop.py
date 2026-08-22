@@ -37,6 +37,9 @@ DEADMAN_TIMEOUT_MS = int(os.getenv("TELEOP_DEADMAN_TIMEOUT_MS", "750"))
 MAX_STREAM_HZ = 10
 MIN_PACKET_INTERVAL_S = 1.0 / MAX_STREAM_HZ
 
+STOP_CONFIRMED_STAGES = {"EXECUTED", "MOCK_CONFIRMED"}
+STOP_ACCEPTED_STAGES = {"EXECUTED", "QUEUED", "MOCK_CONFIRMED", "MOCK_SKIPPED"}
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -49,6 +52,75 @@ def _finite(value: float, name: str) -> float:
     if not math.isfinite(number):
         raise ValueError(f"{name} must be finite")
     return number
+
+
+def classify_hold_stop(
+    actuation: ActuationResult | None,
+    *,
+    telemetry_confirms_stopped: bool = False,
+) -> dict[str, Any]:
+    """Map an E-stop attempt into truthful HOLD pause fields.
+
+    robot_stopped is always identical to stop_confirmed.
+    """
+    stop_requested = True
+    if actuation is None:
+        # Mock backend: no Isaac call; confirmation comes from local mock state update.
+        return {
+            "status": "PAUSED_FOR_REVIEW",
+            "stop_requested": True,
+            "stop_request_accepted": True,
+            "stop_confirmed": True,
+            "robot_stopped": True,
+            "stop_stage": "MOCK_CONFIRMED",
+            "stop_ack": {"ok": True, "stage": "MOCK_SKIPPED", "command_id": None},
+            "runtime_robot_status": "STOPPED",
+            "apply_mock_stopped": True,
+        }
+
+    ack = actuation.to_dict()
+    stage = str(actuation.stage or "FAILED")
+    accepted = bool(actuation.ok) and stage in {"EXECUTED", "QUEUED"}
+    if stage == "EXECUTED" and actuation.ok:
+        confirmed = True
+        status = "PAUSED_FOR_REVIEW"
+        stop_stage = "EXECUTED"
+        runtime = "STOPPED"
+        apply_mock = True
+    elif stage == "QUEUED" and actuation.ok:
+        if telemetry_confirms_stopped:
+            confirmed = True
+            status = "PAUSED_FOR_REVIEW"
+            stop_stage = "QUEUED"
+            runtime = "STOPPED"
+            apply_mock = True
+        else:
+            confirmed = False
+            status = "PAUSE_STOP_PENDING"
+            stop_stage = "QUEUED"
+            runtime = "STOP_UNCONFIRMED"
+            apply_mock = False
+    else:
+        confirmed = False
+        accepted = False
+        status = "PAUSE_STOP_FAILED"
+        stop_stage = "FAILED"
+        runtime = "STOP_UNCONFIRMED"
+        apply_mock = False
+        if stage not in {"FAILED", "QUEUED", "EXECUTED"}:
+            stop_stage = "UNVERIFIED"
+
+    return {
+        "status": status,
+        "stop_requested": stop_requested,
+        "stop_request_accepted": accepted,
+        "stop_confirmed": confirmed,
+        "robot_stopped": confirmed,
+        "stop_stage": stop_stage,
+        "stop_ack": ack,
+        "runtime_robot_status": runtime,
+        "apply_mock_stopped": apply_mock,
+    }
 
 
 @dataclass
@@ -80,8 +152,9 @@ class TeleopManager:
         get_security_state: Callable[[], dict[str, Any]],
         apply_containment: Callable[[str, list[str]], None],
         append_event: Callable[[dict[str, Any]], None],
-        update_mock_pose: Callable[[float, float, float, str | None], None] | None = None,
+        update_mock_pose: Callable[..., None] | None = None,
         update_mock_manipulator: Callable[..., None] | None = None,
+        set_runtime_state: Callable[..., None] | None = None,
     ) -> None:
         self._lock = threading.RLock()
         self._leases: dict[str, TeleopLease] = {}  # robot_id -> lease
@@ -91,6 +164,7 @@ class TeleopManager:
         self._append_event = append_event
         self._update_mock_pose = update_mock_pose
         self._update_mock_manipulator = update_mock_manipulator
+        self._set_runtime_state = set_runtime_state
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._deadman_loop, name="teleop-deadman", daemon=True
@@ -107,6 +181,174 @@ class TeleopManager:
 
     def config(self) -> dict[str, Any]:
         return teleop_config_payload()
+
+    def _ai_gate(
+        self,
+        *,
+        lease: TeleopLease,
+        action_type_value: str,
+        action_payload: dict[str, Any],
+    ) -> tuple[bool, dict[str, Any]]:
+        """Score outside the teleop lock. Returns (allow, enrichment)."""
+        from backend.action_context import ActionType
+        from backend.ai_response import ai_engine
+
+        decision, incident = ai_engine.evaluate_action(
+            action_type=ActionType(action_type_value),
+            agent_id=lease.agent_id,
+            device_id=lease.device_id,
+            robot_id=lease.robot_id,
+            credential=lease.credential,
+            session_id=lease.control_id,
+            action_payload=action_payload,
+            hard_reasons=[],
+            protection_enabled=True,
+        )
+        enrichment = {
+            "decision_source": decision.decision_source,
+            "hard_policy_would_block": decision.hard_policy_would_block,
+            "hard_policy_reasons": decision.hard_policy_reasons,
+            "anomaly_risk_score": decision.anomaly_risk_score,
+            "behavioral_rule_score": decision.behavioral_rule_score,
+            "effective_risk": decision.effective_risk,
+            "anomaly_model": decision.anomaly_model,
+            "anomaly_model_version": decision.anomaly_model_version,
+            "anomaly_features": decision.anomaly_features,
+            "ai_mode": decision.ai_mode,
+            "model_confidence": decision.model_confidence,
+            "response_playbook": decision.response_playbook,
+            "final_decision": decision.final_decision,
+            "policy_decision": decision.policy_decision,
+            "caught_by": decision.decision_source
+            if decision.decision_source
+            not in {"none", "deterministic_fallback"}
+            else "none",
+        }
+        if incident:
+            enrichment["incident_id"] = incident.get("incident_id")
+
+        if decision.final_decision == "HOLD":
+            # Rejected command never reaches the Isaac action adapter (caller
+            # returns before maybe_actuate_*). Attempt authenticated stop, then
+            # deactivate the lease. Credentials stay active.
+            stop = maybe_actuate_stop(lease.robot_id)
+            telemetry_stopped = self._telemetry_confirms_base_stopped(
+                self._get_security_state()
+            )
+            classified = classify_hold_stop(
+                stop, telemetry_confirms_stopped=telemetry_stopped
+            )
+
+            if classified["apply_mock_stopped"] and self._update_mock_pose is not None:
+                self._update_mock_pose(
+                    keep_position=True,
+                    speed=0.0,
+                    command_id=(stop.command_id if stop else None),
+                    motion_state="STOPPED",
+                )
+            elif self._set_runtime_state is not None:
+                # Do not invent a zero speed when Isaac stop is unconfirmed.
+                self._set_runtime_state(
+                    robot_status=classified["runtime_robot_status"],
+                )
+
+            if classified["apply_mock_stopped"] and self._set_runtime_state is not None:
+                self._set_runtime_state(
+                    robot_status=classified["runtime_robot_status"],
+                    robot_speed=0.0,
+                )
+
+            with self._lock:
+                lease.active = False
+
+            enrichment["status"] = classified["status"]
+            enrichment["reasons"] = [
+                "AI_HOLD",
+                classified["status"],
+                decision.response_playbook or "SUSPICIOUS_SESSION",
+            ]
+            if not classified["stop_confirmed"]:
+                enrichment["reasons"].append("STOP_UNCONFIRMED")
+            enrichment["reasons"] = [r for r in enrichment["reasons"] if r]
+            enrichment["control_id"] = lease.control_id
+            enrichment["robot_id"] = lease.robot_id
+            enrichment["stop_requested"] = classified["stop_requested"]
+            enrichment["stop_request_accepted"] = classified["stop_request_accepted"]
+            enrichment["stop_confirmed"] = classified["stop_confirmed"]
+            enrichment["robot_stopped"] = classified["robot_stopped"]
+            enrichment["stop_stage"] = classified["stop_stage"]
+            enrichment["stop_ack"] = classified["stop_ack"]
+            enrichment["credential_revoked"] = False
+            enrichment["agent_quarantined"] = False
+
+            if incident and incident.get("incident_id"):
+                from backend.incident_store import incident_store
+
+                evidence = dict(incident.get("ai_evidence") or {})
+                evidence["hold_stop"] = {
+                    "stop_requested": classified["stop_requested"],
+                    "stop_request_accepted": classified["stop_request_accepted"],
+                    "stop_confirmed": classified["stop_confirmed"],
+                    "robot_stopped": classified["robot_stopped"],
+                    "stop_stage": classified["stop_stage"],
+                    "stop_ack": classified["stop_ack"],
+                    "status": classified["status"],
+                }
+                incident_store.update_fields(
+                    incident["incident_id"],
+                    ai_evidence_json=evidence,
+                )
+
+            self._append_event(
+                {
+                    "timestamp": _utcnow().isoformat(),
+                    "kind": "teleop_hold_pause",
+                    "robot_id": lease.robot_id,
+                    "control_id": lease.control_id,
+                    "final_decision": "HOLD",
+                    "decision_source": decision.decision_source,
+                    "status": classified["status"],
+                    "stop_stage": classified["stop_stage"],
+                    "stop_confirmed": classified["stop_confirmed"],
+                    "actions": [
+                        "ROBOT_ESTOP_REQUESTED",
+                        classified["status"],
+                    ],
+                }
+            )
+            return False, enrichment
+
+        if decision.final_decision == "BLOCK":
+            with self._lock:
+                lease.active = False
+            enrichment["status"] = "REJECTED"
+            enrichment["reasons"] = [
+                "AI_BLOCK",
+                decision.response_playbook or "",
+            ]
+            enrichment["reasons"] = [r for r in enrichment["reasons"] if r]
+            enrichment["control_id"] = lease.control_id
+            enrichment["robot_id"] = lease.robot_id
+            return False, enrichment
+        return True, enrichment
+
+    def _telemetry_confirms_base_stopped(self, security: dict[str, Any]) -> bool:
+        bridge = (
+            security.get("isaac_bridge_state")
+            or security.get("mock_bridge_state")
+            or {}
+        )
+        try:
+            speed = float(security.get("robot_speed", bridge.get("speed", 1.0)))
+        except (TypeError, ValueError):
+            return False
+        motion = bridge.get("motion_state") or security.get("robot_status")
+        return speed == 0.0 and motion in {
+            "STOPPED",
+            "IDLE",
+            "STOWED",
+            "CONTAINED",
+        }
 
     def start(self, payload: dict[str, Any]) -> dict[str, Any]:
         credential = str(payload.get("credential", ""))
@@ -354,6 +596,26 @@ class TeleopManager:
                 sequence=sequence,
             )
 
+        with self._lock:
+            lease = self._by_id.get(control_id)
+        if lease is None:
+            return {
+                "status": "REJECTED",
+                "reasons": ["UNKNOWN_OR_MISMATCHED_LEASE"],
+                "control_id": control_id,
+                "sequence": sequence,
+            }
+
+        allow, enrich = self._ai_gate(
+            lease=lease,
+            action_type_value="BASE_MOVE",
+            action_payload={"x": x, "y": y, "speed": speed, "zone": zone},
+        )
+        if not allow:
+            enrich["sequence"] = sequence
+            enrich["zone"] = zone
+            return enrich
+
         actuation = maybe_actuate_move_xy(robot_id, x, y, speed)
         command_id = None
         status = "EXECUTED"
@@ -383,6 +645,7 @@ class TeleopManager:
             "control_id": control_id,
             "sequence": sequence,
             "zone": zone,
+            **{k: v for k, v in enrich.items() if k not in {"status", "reasons"}},
         }
 
     def arm_preset(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -401,8 +664,25 @@ class TeleopManager:
         if rejection is not None:
             return rejection
 
+        with self._lock:
+            lease = self._by_id.get(control_id)
+        if lease is None:
+            return {
+                "status": "REJECTED",
+                "reasons": ["UNKNOWN_OR_MISMATCHED_LEASE"],
+                "control_id": control_id,
+                "robot_id": robot_id,
+            }
+        allow, enrich = self._ai_gate(
+            lease=lease,
+            action_type_value="ARM_PRESET",
+            action_payload={"preset": preset},
+        )
+        if not allow:
+            return enrich
+
         actuation = maybe_actuate_arm_preset(robot_id, preset)
-        return self._aux_actuation_result(
+        result = self._aux_actuation_result(
             control_id=control_id,
             robot_id=robot_id,
             kind="arm_preset",
@@ -410,6 +690,8 @@ class TeleopManager:
             actuation=actuation,
             extra={"preset": preset},
         )
+        result.update({k: v for k, v in enrich.items() if k not in result})
+        return result
 
     def arm_joints(self, payload: dict[str, Any]) -> dict[str, Any]:
         control_id = str(payload.get("control_id", ""))
@@ -438,8 +720,25 @@ class TeleopManager:
         if rejection is not None:
             return rejection
 
+        with self._lock:
+            lease = self._by_id.get(control_id)
+        if lease is None:
+            return {
+                "status": "REJECTED",
+                "reasons": ["UNKNOWN_OR_MISMATCHED_LEASE"],
+                "control_id": control_id,
+                "robot_id": robot_id,
+            }
+        allow, enrich = self._ai_gate(
+            lease=lease,
+            action_type_value="ARM_JOINTS",
+            action_payload={"targets_degrees": targets_degrees},
+        )
+        if not allow:
+            return enrich
+
         actuation = maybe_actuate_arm_joints(robot_id, targets_degrees)
-        return self._aux_actuation_result(
+        result = self._aux_actuation_result(
             control_id=control_id,
             robot_id=robot_id,
             kind="arm_joints",
@@ -447,6 +746,8 @@ class TeleopManager:
             actuation=actuation,
             extra={"targets_degrees": targets_degrees},
         )
+        result.update({k: v for k, v in enrich.items() if k not in result})
+        return result
 
     def gripper(self, payload: dict[str, Any]) -> dict[str, Any]:
         control_id = str(payload.get("control_id", ""))
@@ -464,8 +765,26 @@ class TeleopManager:
         if rejection is not None:
             return rejection
 
+        with self._lock:
+            lease = self._by_id.get(control_id)
+        if lease is None:
+            return {
+                "status": "REJECTED",
+                "reasons": ["UNKNOWN_OR_MISMATCHED_LEASE"],
+                "control_id": control_id,
+                "robot_id": robot_id,
+            }
+        action_type = "GRIPPER_OPEN" if action == "open" else "GRIPPER_CLOSE"
+        allow, enrich = self._ai_gate(
+            lease=lease,
+            action_type_value=action_type,
+            action_payload={"action": action},
+        )
+        if not allow:
+            return enrich
+
         actuation = maybe_actuate_gripper(robot_id, action)
-        return self._aux_actuation_result(
+        result = self._aux_actuation_result(
             control_id=control_id,
             robot_id=robot_id,
             kind="gripper",
@@ -473,11 +792,14 @@ class TeleopManager:
             actuation=actuation,
             extra={"action": action},
         )
+        result.update({k: v for k, v in enrich.items() if k not in result})
+        return result
 
     def stop(self, payload: dict[str, Any]) -> dict[str, Any]:
         control_id = str(payload.get("control_id", ""))
         robot_id = str(payload.get("robot_id", "robot-01"))
         reason = str(payload.get("reason", "JOYSTICK_RELEASED"))
+        lease_snapshot: TeleopLease | None = None
         with self._lock:
             lease = self._by_id.get(control_id)
             # Fail-safe: accept stop for a recently known lease even if expired.
@@ -485,7 +807,36 @@ class TeleopManager:
                 # Still attempt robot stop if any active lease on robot.
                 lease = self._leases.get(robot_id)
             if lease is not None:
+                lease_snapshot = lease
                 lease.active = False
+
+        # Score BASE_STOP through the unified action engine (observe mode — never
+        # blocks an authenticated stop). Physical stop always proceeds.
+        enrich: dict[str, Any] = {}
+        if lease_snapshot is not None:
+            from backend.action_context import ActionType
+            from backend.ai_response import ai_engine
+
+            decision, _incident = ai_engine.evaluate_action(
+                action_type=ActionType.BASE_STOP,
+                agent_id=lease_snapshot.agent_id,
+                device_id=lease_snapshot.device_id,
+                robot_id=lease_snapshot.robot_id,
+                credential=lease_snapshot.credential,
+                session_id=lease_snapshot.control_id,
+                action_payload={"reason": reason},
+                hard_reasons=[],
+                protection_enabled=True,
+            )
+            enrich = {
+                "decision_source": decision.decision_source,
+                "anomaly_risk_score": decision.anomaly_risk_score,
+                "behavioral_rule_score": decision.behavioral_rule_score,
+                "effective_risk": decision.effective_risk,
+                "ai_mode": decision.ai_mode,
+                "final_decision": decision.final_decision,
+            }
+
         actuation = maybe_actuate_stop(robot_id)
         if self._update_mock_pose:
             self._update_mock_pose(
@@ -507,7 +858,8 @@ class TeleopManager:
                 "control_id": control_id,
                 "reason": reason,
                 "final_decision": "STOP",
-                "actions": ["TELEOP_STOP", f"ISAAC_ESTOP_{stage}"],
+                "actions": ["TELEOP_STOP", "BASE_STOP", f"ISAAC_ESTOP_{stage}"],
+                **{k: v for k, v in enrich.items() if k != "final_decision"},
             }
         )
         return {
@@ -516,6 +868,8 @@ class TeleopManager:
             "control_id": control_id,
             "robot_id": robot_id,
             "reason": reason,
+            "action_type": "BASE_STOP",
+            **enrich,
         }
 
     def _hard_block(
