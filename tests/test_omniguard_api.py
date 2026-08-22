@@ -22,6 +22,7 @@ EXPECTED_DECISIONS = {
     "combined_attack": {"BLOCK"},
     "behavioral_anomaly": {"BLOCK"},
     "revoked_replay": {"BLOCK"},
+    "valid_identity_malicious_manipulation": {"BLOCK"},
 }
 
 

@@ -149,6 +149,25 @@ SCENARIOS: list[dict[str, Any]] = [
         "default_protection": True,
         "requires_prior_revoke": True,
     },
+    {
+        "id": "valid_identity_malicious_manipulation",
+        "title": "Valid identity malicious manipulation",
+        "description": (
+            "Known device and valid credential issue individually legal "
+            "base/arm/gripper actions that form an abnormal manipulation window. "
+            "Blocked by a hybrid ML-plus-behavioral-rule action-window engine."
+        ),
+        "agent_id": "fleet-agent-01",
+        "device_id": KNOWN_DEVICE,
+        "robot_id": "robot-01",
+        "destination": "SAFE_ZONE_A",
+        "speed": 0.8,
+        "credential": VALID_TOKEN,
+        "expected_signals": ["AI_BLOCK"],
+        "expected_action": "BLOCK",
+        "default_protection": True,
+        "kind": "teleop_sequence",
+    },
 ]
 
 
