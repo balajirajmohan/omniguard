@@ -14,6 +14,13 @@ npm run build    # typecheck + production bundle to dist/
 npm run preview
 ```
 
+## GitHub Pages
+
+Pushes to `main` that change `landing/` run `.github/workflows/deploy-landing-pages.yml`.
+The workflow builds with the `/omniguard/` base path and publishes `landing/dist` to the
+`gh-pages` branch. Configure repository Pages as **Deploy from a branch**, selecting
+`gh-pages` and the repository root.
+
 ## Routes
 
 | Route   | Contents |
