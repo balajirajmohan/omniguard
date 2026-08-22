@@ -3,72 +3,61 @@ import RiskMeter from './RiskMeter.jsx';
 import { FEATURE_LABELS } from '../lib/omniguard.js';
 
 const VERDICT = {
-  ALLOW: { Icon: ShieldCheck, cls: 'border-ok/60 bg-ok/10 text-ok' },
-  HOLD:  { Icon: Scale,       cls: 'border-warn/60 bg-warn/10 text-warn' },
-  BLOCK: { Icon: ShieldX,     cls: 'border-bad/60 bg-bad/10 text-bad' },
+  ALLOW: { Icon: ShieldCheck, cls: 'border-ok/55 bg-ok/10 text-ok' },
+  HOLD:  { Icon: Scale,       cls: 'border-warn/55 bg-warn/10 text-warn' },
+  BLOCK: { Icon: ShieldX,     cls: 'border-bad/55 bg-bad/10 text-bad' },
 };
-
-/* "caught_by" is the whole thesis in one field: rules catch the known, the model
- * catches the unknown. hard_policy_would_block === false on a BLOCK means the
- * rules alone would have let it through. */
-function CaughtBy({ event }) {
-  const by = event.caught_by;
-  if (!by) return null;
-  const aiOnly = event.hard_policy_would_block === false && event.final_decision !== 'ALLOW';
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5
-                      font-mono text-[10.5px] ${aiOnly ? 'border-info/60 bg-info/10 text-info' : 'border-line text-dim'}`}>
-      {aiOnly && <Brain size={10} aria-hidden="true" />}
-      caught by {String(by).replace(/_/g, ' ')}
-    </span>
-  );
-}
 
 export default function DecisionCard({ event, timeline }) {
   if (!event) {
     return (
-      <section className="card p-4" aria-label="Latest decision">
-        <h2 className="mb-2 text-[15px]">Latest decision</h2>
-        <p className="text-[12px] text-faint">Run a scenario or move a joystick to produce a verdict.</p>
+      <section className="card flex flex-col p-3.5" aria-label="Latest decision">
+        <h2 className="text-[13.5px]">Latest decision</h2>
+        <p className="mt-2 text-[11.5px] text-faint">
+          Run a scenario or move a stick to produce a verdict.
+        </p>
       </section>
     );
   }
 
   const v = VERDICT[event.final_decision] ?? VERDICT.HOLD;
   const { Icon } = v;
-  const features = event.anomaly_features ?? {};
+  /* hard_policy_would_block === false on a BLOCK is the whole thesis: the rules
+   * alone would have allowed it and only the model caught it. */
+  const aiOnly = event.hard_policy_would_block === false && event.final_decision !== 'ALLOW';
 
   return (
-    <section className="card p-4" aria-label="Latest decision">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-[15px]">Latest decision</h2>
-        <span className={`flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-bold
-                          tracking-[.1em] ${v.cls}`}>
-          <Icon size={13} aria-hidden="true" />{event.final_decision}
+    <section className="card pane flex flex-col p-3.5" aria-label="Latest decision">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-[13.5px]">Latest decision</h2>
+        <span className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5
+                          text-[10px] font-bold tracking-[.1em] ${v.cls}`}>
+          <Icon size={11} aria-hidden="true" />{event.final_decision}
         </span>
       </div>
 
-      <div className="mb-3 flex flex-wrap items-center gap-1.5">
-        <span className="rounded-full border border-line px-2.5 py-0.5 font-mono text-[10.5px] text-dim">
-          {event.policy_decision}
-        </span>
-        <CaughtBy event={event} />
+      <div className="mb-2 flex flex-wrap gap-1">
+        <span className="chip">{event.policy_decision}</span>
+        {event.caught_by && (
+          <span className={`chip ${aiOnly ? 'border-info/55 bg-info/10 text-info' : ''}`}>
+            {aiOnly && <Brain size={9} aria-hidden="true" />}
+            caught by {String(event.caught_by).replace(/_/g, ' ')}
+          </span>
+        )}
         {event.reasons?.map((r) => (
-          <span key={r} className="rounded-full border border-bad/50 bg-bad/10 px-2.5 py-0.5
-                                   font-mono text-[10.5px] text-bad">{r}</span>
+          <span key={r} className="chip border-bad/45 bg-bad/10 text-bad">{r}</span>
         ))}
       </div>
 
       <RiskMeter risk={event.anomaly_risk_score} modelVersion={event.anomaly_model_version}
         unavailable={event.ai_unavailable} />
 
-      {/* Server-derived features — why a HOLD happened, not just that it did. */}
-      <div className="mt-3">
-        <span className="label mb-1.5">Server-derived behaviour</span>
-        <dl className="grid grid-cols-2 gap-1 font-mono text-[10.5px] sm:grid-cols-3">
-          {Object.entries(features).map(([k, val]) => (
-            <div key={k} className="flex items-baseline justify-between gap-2 rounded-lg
-                                    border border-line bg-sunken/70 px-2 py-1">
+      <div className="mt-2.5">
+        <span className="label mb-1">Server-derived behaviour</span>
+        <dl className="grid grid-cols-2 gap-1 font-mono text-[9.5px]">
+          {Object.entries(event.anomaly_features ?? {}).map(([k, val]) => (
+            <div key={k} className="flex items-baseline justify-between gap-1 rounded-md
+                                    border border-line bg-sunken/70 px-1.5 py-0.5">
               <dt className="truncate text-faint">{FEATURE_LABELS[k] ?? k}</dt>
               <dd className="shrink-0 tabular-nums text-dim">{Number(val)}</dd>
             </div>
@@ -77,12 +66,13 @@ export default function DecisionCard({ event, timeline }) {
       </div>
 
       {timeline?.length > 0 && (
-        <div className="mt-3">
-          <span className="label mb-1.5">Decision trace</span>
+        <div className="mt-2.5">
+          <span className="label mb-1">Decision trace</span>
           <ol className="space-y-0.5">
             {[...timeline].reverse().map((step, i) => (
-              <li key={`${step.step}-${i}`} className="flex items-center gap-1.5 font-mono text-[10.5px] text-dim">
-                <ChevronRight size={10} className="shrink-0 text-faint" aria-hidden="true" />
+              <li key={`${step.step}-${i}`}
+                className="flex items-center gap-1 font-mono text-[9.5px] text-dim">
+                <ChevronRight size={9} className="shrink-0 text-faint" aria-hidden="true" />
                 <span className="truncate">{step.step.replace(/_/g, ' ')}</span>
               </li>
             ))}
@@ -91,8 +81,8 @@ export default function DecisionCard({ event, timeline }) {
       )}
 
       {event.incident_explanation?.summary && (
-        <p className="mt-3 rounded-xl border border-line bg-sunken/70 px-3 py-2 text-[11.5px]
-                      leading-relaxed text-dim">
+        <p className="mt-2.5 rounded-lg border border-line bg-sunken/70 px-2.5 py-1.5
+                      text-[10.5px] leading-relaxed text-dim">
           {event.incident_explanation.summary}
         </p>
       )}

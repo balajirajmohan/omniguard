@@ -25,6 +25,8 @@ from backend.anomaly import detector
 from backend.policy import HARD_VIOLATIONS, KNOWN_DEVICE, collect_reasons
 from backend.zones import (
     ALLOWED_TELEOP_ZONES,
+    ARM_PRESETS,
+    GRIPPER_ACTIONS,
     MAX_TELEOP_SPEED,
     is_allowed_teleop_point,
     teleop_config_payload,
@@ -79,6 +81,7 @@ class TeleopManager:
         apply_containment: Callable[[str, list[str]], None],
         append_event: Callable[[dict[str, Any]], None],
         update_mock_pose: Callable[[float, float, float, str | None], None] | None = None,
+        update_mock_manipulator: Callable[..., None] | None = None,
     ) -> None:
         self._lock = threading.RLock()
         self._leases: dict[str, TeleopLease] = {}  # robot_id -> lease
@@ -87,6 +90,7 @@ class TeleopManager:
         self._apply_containment = apply_containment
         self._append_event = append_event
         self._update_mock_pose = update_mock_pose
+        self._update_mock_manipulator = update_mock_manipulator
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._deadman_loop, name="teleop-deadman", daemon=True
@@ -247,90 +251,108 @@ class TeleopManager:
                 stop=True,
             )
 
-        with self._lock:
-            lease = self._by_id.get(control_id)
-            if lease is None or lease.robot_id != robot_id:
-                return {
-                    "status": "REJECTED",
-                    "reasons": ["UNKNOWN_OR_MISMATCHED_LEASE"],
-                    "control_id": control_id,
-                    "sequence": sequence,
-                }
-            if lease.expired():
-                lease.active = False
-                return self._reject_move(
-                    control_id=control_id,
-                    robot_id=robot_id,
-                    reasons=["LEASE_EXPIRED"],
-                    stop=True,
-                    lease=lease,
-                )
+        # Decide under the lock, act outside it. _reject_move stops the robot over
+        # HTTP and appends events through the API state lock; doing either here
+        # would starve _deadman_loop, which needs this lock every 100 ms.
+        def _decide() -> tuple[str, dict[str, Any]]:
+            """("payload", body) to return as-is, ("reject", kwargs), or ("ok", derived)."""
+            with self._lock:
+                lease = self._by_id.get(control_id)
+                if lease is None or lease.robot_id != robot_id:
+                    return (
+                        "payload",
+                        {
+                            "status": "REJECTED",
+                            "reasons": ["UNKNOWN_OR_MISMATCHED_LEASE"],
+                            "control_id": control_id,
+                            "sequence": sequence,
+                        },
+                    )
+                if lease.expired():
+                    lease.active = False
+                    return ("reject", {"reasons": ["LEASE_EXPIRED"], "lease": lease})
+                if sequence <= lease.last_sequence:
+                    return (
+                        "reject",
+                        {
+                            "reasons": ["SEQUENCE_REPLAY"],
+                            "lease": lease,
+                            "sequence": sequence,
+                        },
+                    )
+                now = _utcnow()
+                if lease.last_packet_at is not None:
+                    # Rolling 1s window rate limit (~10 Hz with headroom).
+                    recent = getattr(lease, "_packet_times", [])
+                    recent = [t for t in recent if (now - t).total_seconds() < 1.0]
+                    if len(recent) >= MAX_STREAM_HZ + 2:
+                        return (
+                            "payload",
+                            {
+                                "status": "REJECTED",
+                                "reasons": ["RATE_LIMIT"],
+                                "control_id": control_id,
+                                "sequence": sequence,
+                            },
+                        )
+                    recent.append(now)
+                    lease._packet_times = recent  # type: ignore[attr-defined]
+                if speed < 0 or speed > lease.max_speed:
+                    return (
+                        "reject",
+                        {
+                            "reasons": ["EXCESSIVE_SPEED"],
+                            "lease": lease,
+                            "sequence": sequence,
+                        },
+                    )
+                allowed, zone = is_allowed_teleop_point(x, y)
+                if not allowed or zone not in lease.allowed_zones:
+                    return (
+                        "reject",
+                        {
+                            "reasons": ["RESTRICTED_DESTINATION"],
+                            "lease": lease,
+                            "sequence": sequence,
+                            "zone": zone,
+                        },
+                    )
 
-            security = self._get_security_state()
-            if security.get("credential_status") != "ACTIVE":
-                lease.active = False
-                return self._reject_move(
-                    control_id=control_id,
-                    robot_id=robot_id,
-                    reasons=["REVOKED_CREDENTIAL"],
-                    stop=True,
-                    lease=lease,
-                )
-            if security.get("agent_status") == "QUARANTINED":
-                lease.active = False
-                return self._reject_move(
-                    control_id=control_id,
-                    robot_id=robot_id,
-                    reasons=["IDENTITY_QUARANTINED"],
-                    stop=True,
-                    lease=lease,
-                )
-            if sequence <= lease.last_sequence:
-                return self._reject_move(
-                    control_id=control_id,
-                    robot_id=robot_id,
-                    reasons=["SEQUENCE_REPLAY"],
-                    stop=True,
-                    lease=lease,
-                    sequence=sequence,
-                )
-            now = _utcnow()
-            if lease.last_packet_at is not None:
-                # Rolling 1s window rate limit (~10 Hz with headroom).
-                recent = getattr(lease, "_packet_times", [])
-                recent = [t for t in recent if (now - t).total_seconds() < 1.0]
-                if len(recent) >= MAX_STREAM_HZ + 2:
-                    return {
-                        "status": "REJECTED",
-                        "reasons": ["RATE_LIMIT"],
-                        "control_id": control_id,
-                        "sequence": sequence,
-                    }
-                recent.append(now)
-                lease._packet_times = recent  # type: ignore[attr-defined]
-            if speed < 0 or speed > lease.max_speed:
-                return self._reject_move(
-                    control_id=control_id,
-                    robot_id=robot_id,
-                    reasons=["EXCESSIVE_SPEED"],
-                    stop=True,
-                    lease=lease,
-                    sequence=sequence,
-                )
-            allowed, zone = is_allowed_teleop_point(x, y)
-            if not allowed or zone not in lease.allowed_zones:
-                return self._reject_move(
-                    control_id=control_id,
-                    robot_id=robot_id,
-                    reasons=["RESTRICTED_DESTINATION"],
-                    stop=True,
-                    lease=lease,
-                    sequence=sequence,
-                    zone=zone,
-                )
+                lease.last_sequence = sequence
+                lease.last_packet_at = now
+                return ("ok", {"zone": zone})
 
-            lease.last_sequence = sequence
-            lease.last_packet_at = now
+        decision = _decide()
+        kind, body = decision
+        if kind == "payload":
+            return body
+        if kind == "reject":
+            return self._reject_move(
+                control_id=control_id, robot_id=robot_id, stop=True, **body
+            )
+        # Server-derived zone: the client never supplies one.
+        zone = body["zone"]
+
+        # Security state lives behind the API state lock, so it is read with this
+        # lock released -- see _validate_aux_command for why the two must never
+        # be held at once. Checked before actuating, so a revoked credential
+        # still stops the robot rather than moving it.
+        security = self._get_security_state()
+        revoked = security.get("credential_status") != "ACTIVE"
+        quarantined = security.get("agent_status") == "QUARANTINED"
+        if revoked or quarantined:
+            with self._lock:
+                lease = self._by_id.get(control_id)
+                if lease is not None:
+                    lease.active = False
+            return self._reject_move(
+                control_id=control_id,
+                robot_id=robot_id,
+                reasons=["REVOKED_CREDENTIAL" if revoked else "IDENTITY_QUARANTINED"],
+                stop=True,
+                lease=lease,
+                sequence=sequence,
+            )
 
         actuation = maybe_actuate_move_xy(robot_id, x, y, speed)
         command_id = None
@@ -367,7 +389,7 @@ class TeleopManager:
         control_id = str(payload.get("control_id", ""))
         robot_id = str(payload.get("robot_id", "robot-01"))
         preset = str(payload.get("preset", "")).strip().lower()
-        if preset not in {"stow", "carry", "reach", "inspect"}:
+        if preset not in ARM_PRESETS:
             return self._reject_aux_command(
                 control_id=control_id,
                 robot_id=robot_id,
@@ -430,7 +452,7 @@ class TeleopManager:
         control_id = str(payload.get("control_id", ""))
         robot_id = str(payload.get("robot_id", "robot-01"))
         action = str(payload.get("action", "")).strip().lower()
-        if action not in {"open", "close"}:
+        if action not in GRIPPER_ACTIONS:
             return self._reject_aux_command(
                 control_id=control_id,
                 robot_id=robot_id,
@@ -614,44 +636,48 @@ class TeleopManager:
     def _validate_aux_command(
         self, control_id: str, robot_id: str
     ) -> dict[str, Any] | None:
+        """Decide under the lock, act outside it.
+
+        _reject_aux_command talks to the Isaac bridge over HTTP and re-enters the
+        API state lock, and _get_security_state re-enters it too. Holding this
+        lock across either starves _deadman_loop, which needs it every 100 ms to
+        honour the 750 ms deadman -- the guarantee that stops a runaway robot.
+        """
+        pending: tuple[list[str], bool, TeleopLease | None] | None = None
+
         with self._lock:
             lease = self._by_id.get(control_id)
             if lease is None or lease.robot_id != robot_id:
-                return self._reject_aux_command(
-                    control_id=control_id,
-                    robot_id=robot_id,
-                    reasons=["UNKNOWN_OR_MISMATCHED_LEASE"],
-                    stop=False,
-                )
-            if lease.expired():
+                pending = (["UNKNOWN_OR_MISMATCHED_LEASE"], False, None)
+            elif lease.expired():
                 lease.active = False
-                return self._reject_aux_command(
-                    control_id=control_id,
-                    robot_id=robot_id,
-                    reasons=["LEASE_EXPIRED"],
-                    stop=True,
-                    lease=lease,
-                )
+                pending = (["LEASE_EXPIRED"], True, lease)
+
+        if pending is None:
             security = self._get_security_state()
+            reason = None
             if security.get("credential_status") != "ACTIVE":
-                lease.active = False
-                return self._reject_aux_command(
-                    control_id=control_id,
-                    robot_id=robot_id,
-                    reasons=["REVOKED_CREDENTIAL"],
-                    stop=True,
-                    lease=lease,
-                )
-            if security.get("agent_status") == "QUARANTINED":
-                lease.active = False
-                return self._reject_aux_command(
-                    control_id=control_id,
-                    robot_id=robot_id,
-                    reasons=["IDENTITY_QUARANTINED"],
-                    stop=True,
-                    lease=lease,
-                )
-        return None
+                reason = "REVOKED_CREDENTIAL"
+            elif security.get("agent_status") == "QUARANTINED":
+                reason = "IDENTITY_QUARANTINED"
+            if reason is not None:
+                with self._lock:
+                    lease = self._by_id.get(control_id)
+                    if lease is not None:
+                        lease.active = False
+                pending = ([reason], True, lease)
+
+        if pending is None:
+            return None
+
+        reasons, stop, rejected_lease = pending
+        return self._reject_aux_command(
+            control_id=control_id,
+            robot_id=robot_id,
+            reasons=reasons,
+            stop=stop,
+            lease=rejected_lease,
+        )
 
     def _reject_aux_command(
         self,
@@ -706,6 +732,27 @@ class TeleopManager:
         if actuation is None:
             status = "EXECUTED"
             command_id = f"mock-{uuid.uuid4()}"
+            # Mock mode has no Isaac to echo the pose back, so record it here in
+            # the same shape the bridge uses.
+            if self._update_mock_manipulator is not None:
+                if kind == "arm_preset":
+                    self._update_mock_manipulator(
+                        arm={"mode": "preset", "preset": extra["preset"]},
+                        last_command_id=command_id,
+                    )
+                elif kind == "arm_joints":
+                    self._update_mock_manipulator(
+                        arm={
+                            "mode": "joints",
+                            "targets_degrees": extra["targets_degrees"],
+                        },
+                        last_command_id=command_id,
+                    )
+                elif kind == "gripper":
+                    self._update_mock_manipulator(
+                        gripper={"action": extra["action"]},
+                        last_command_id=command_id,
+                    )
         elif not actuation.ok or actuation.stage == "FAILED":
             maybe_actuate_stop(robot_id)
             with self._lock:

@@ -381,3 +381,258 @@ describe("gamepad mapping", () => {
     expect(OG.padEstopPressed(undefined)).toBe(false);
   });
 });
+
+describe('keyboard control (no click-to-focus)', () => {
+  it('splits WASD to the operator and arrows to the hacker', async () => {
+    const { vectorFor } = await import('../useKeyboardControl.js');
+    expect(vectorFor(new Set(['w']), 'legit')).toEqual({ vec: { x: 0, y: 1 }, mag: 1 });
+    expect(vectorFor(new Set(['ArrowUp']), 'rogue')).toEqual({ vec: { x: 0, y: 1 }, mag: 1 });
+    // Each plane ignores the other plane's keys, so both can be driven at once.
+    expect(vectorFor(new Set(['ArrowUp']), 'legit').mag).toBe(0);
+    expect(vectorFor(new Set(['w']), 'rogue').mag).toBe(0);
+  });
+
+  it('normalises diagonals so they are not faster than cardinals', async () => {
+    const { vectorFor } = await import('../useKeyboardControl.js');
+    const d = vectorFor(new Set(['w', 'd']), 'legit');
+    expect(Math.hypot(d.vec.x, d.vec.y)).toBeCloseTo(1);
+    expect(d.vec.x).toBeCloseTo(Math.SQRT1_2);
+    expect(d.vec.y).toBeCloseTo(Math.SQRT1_2);
+  });
+
+  it('cancels opposing keys and reports released', async () => {
+    const { vectorFor } = await import('../useKeyboardControl.js');
+    expect(vectorFor(new Set(['w', 's']), 'legit')).toEqual({ vec: { x: 0, y: 0 }, mag: 0 });
+    expect(vectorFor(new Set(), 'legit').mag).toBe(0);
+  });
+});
+
+describe('session log export', () => {
+  it('emits a header and one row per decision', async () => {
+    const { toCsv } = await import('../useSessionLog.js');
+    const rows = toCsv([
+      { timestamp: '2026-08-22T10:00:00Z', final_decision: 'BLOCK', reasons: ['UNKNOWN_DEVICE'] },
+      { timestamp: '2026-08-22T10:00:05Z', final_decision: 'ALLOW', reasons: [] },
+    ]).split('\n');
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toContain('"final_decision"');
+    expect(rows[1]).toContain('"BLOCK"');
+    expect(rows[2]).toContain('"ALLOW"');
+  });
+
+  it('escapes quotes and commas in free-text reasons', async () => {
+    const { toCsv } = await import('../useSessionLog.js');
+    const csv = toCsv([{ final_decision: 'BLOCK', reasons: ['said "no", firmly'] }]);
+    expect(csv).toContain('"said ""no"", firmly"');
+    // The embedded comma must not create an extra column.
+    expect(csv.split('\n')[1].split('","')).toHaveLength(12);
+  });
+
+  it('tolerates missing fields rather than writing undefined', async () => {
+    const { toCsv } = await import('../useSessionLog.js');
+    expect(toCsv([{}]).split('\n')[1]).not.toContain('undefined');
+  });
+});
+
+describe('controller aux buttons (arm + gripper)', () => {
+  /* These names are validated server-side in backend/teleop.py; anything else
+   * comes back INVALID_ARM_PRESET / INVALID_GRIPPER_ACTION. */
+  const BACKEND_PRESETS = ['stow', 'carry', 'reach', 'inspect'];
+  const BACKEND_ACTIONS = ['open', 'close'];
+
+  const fireAll = async () => {
+    const { AUX_BUTTONS } = await import('../useController.js');
+    const calls = [];
+    const aux = {
+      armPreset: (p) => calls.push(['arm', p]),
+      gripperFor: (panel, a) => calls.push(['grip', a, panel]),
+    };
+    const byIndex = {};
+    for (const [index, fire] of AUX_BUTTONS) {
+      calls.length = 0;
+      fire(aux);
+      byIndex[index] = calls[0];
+    }
+    return byIndex;
+  };
+
+  it('maps the d-pad to the four arm presets', async () => {
+    const b = await fireAll();
+    expect(b[12]).toEqual(['arm', 'reach']);
+    expect(b[13]).toEqual(['arm', 'stow']);
+    expect(b[14]).toEqual(['arm', 'carry']);
+    expect(b[15]).toEqual(['arm', 'inspect']);
+  });
+
+  /* Left shoulders belong to the operator, right shoulders to the hacker, so a
+   * gripper press is always attributable to one plane. */
+  it('splits the shoulders across the two control planes', async () => {
+    const b = await fireAll();
+    expect(b[4]).toEqual(['grip', 'open', 'legit']);  // L1
+    expect(b[6]).toEqual(['grip', 'close', 'legit']); // L2
+    expect(b[5]).toEqual(['grip', 'open', 'rogue']);  // R1
+    expect(b[7]).toEqual(['grip', 'close', 'rogue']); // R2
+  });
+
+  it('sends only names the backend accepts', async () => {
+    const b = await fireAll();
+    const sent = Object.values(b);
+    const presets = sent.filter(([k]) => k === 'arm').map(([, v]) => v);
+    const actions = sent.filter(([k]) => k === 'grip').map(([, v]) => v);
+    expect(presets.sort()).toEqual([...BACKEND_PRESETS].sort());
+    expect([...new Set(actions)].sort()).toEqual([...BACKEND_ACTIONS].sort());
+  });
+
+  it('does not collide with the emergency-stop button', async () => {
+    const { AUX_BUTTONS } = await import('../useController.js');
+    const { PAD_ESTOP_BUTTON } = await import('../omniguard.js');
+    expect(AUX_BUTTONS.map(([i]) => i)).not.toContain(PAD_ESTOP_BUTTON);
+  });
+});
+
+describe("readManipulator", () => {
+  it("returns null before any arm or gripper is known", () => {
+    expect(OG.readManipulator(null, {})).toBeNull();
+    expect(OG.readManipulator({position: {x: 1, y: 2}}, {})).toBeNull();
+  });
+
+  it("prefers isaac_bridge_state over locally commanded state", () => {
+    const bridge = {
+      arm: {mode: "preset", preset: "reach"},
+      gripper: {action: "close", joints: ["/panda_finger_joint1"]},
+    };
+    const m = OG.readManipulator(bridge, {arm: "stow", gripper: "open"});
+    expect(m.arm).toEqual({preset: "reach", mode: "preset", source: "confirmed"});
+    expect(m.gripper).toEqual({action: "close", source: "confirmed"});
+  });
+
+  /* mock_bridge_state in backend/main.py carries no arm/gripper keys, so the
+   * whole mock demo depends on this fallback. */
+  it("falls back to commanded state when the bridge reports none", () => {
+    const m = OG.readManipulator({position: {x: 0, y: 0}}, {arm: "carry", gripper: "open"});
+    expect(m.arm).toEqual({preset: "carry", mode: "preset", source: "commanded"});
+    expect(m.gripper).toEqual({action: "open", source: "commanded"});
+  });
+
+  it("reports joints mode without inventing a preset name", () => {
+    const m = OG.readManipulator({arm: {mode: "joints", targets_degrees: {panda_joint1: 0}}}, {});
+    expect(m.arm).toEqual({preset: null, mode: "joints", source: "confirmed"});
+    expect(m.gripper).toBeNull();
+  });
+
+  it("ignores values the backend would have rejected", () => {
+    expect(OG.readManipulator({arm: {mode: "preset", preset: "wave"}}, {})).toBeNull();
+    expect(OG.readManipulator(null, {arm: "wave", gripper: "crush"})).toBeNull();
+  });
+
+  it("only knows the presets and actions backend/teleop.py validates", () => {
+    expect(OG.ARM_PRESETS).toEqual(["stow", "carry", "reach", "inspect"]);
+    expect(OG.GRIPPER_ACTIONS).toEqual(["open", "close"]);
+    for (const preset of OG.ARM_PRESETS) {
+      expect(OG.ARM_EXTENSION[preset]).toBeGreaterThan(0);
+      expect(OG.ARM_EXTENSION[preset]).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe("headingFrom", () => {
+  it("faces the active target", () => {
+    expect(OG.headingFrom({x: 0, y: 0}, {x: 5, y: 0}, [])).toBeCloseTo(0);
+    expect(OG.headingFrom({x: 0, y: 0}, {x: 0, y: 5}, [])).toBeCloseTo(Math.PI / 2);
+  });
+
+  it("falls back to the last trail segment when there is no target", () => {
+    const trail = [{x: 0, y: 0}, {x: -3, y: 0}];
+    expect(Math.abs(OG.headingFrom({x: -3, y: 0}, null, trail))).toBeCloseTo(Math.PI);
+  });
+
+  it("defaults to +x rather than refusing to draw a stationary robot", () => {
+    expect(OG.headingFrom({x: 1, y: 1}, {x: 1, y: 1}, [])).toBe(0);
+    expect(OG.headingFrom(null, null, null)).toBe(0);
+  });
+});
+
+describe("aux key bindings", () => {
+  /* Left shoulders are the operator's, right shoulders the hacker's, and every
+   * gripper key has to name its plane or the press is unattributable. */
+  it("splits the gripper across both control planes", async () => {
+    const {AUX_KEYS} = await import("../useKeyboardControl.js");
+    const grips = Object.values(AUX_KEYS).filter((e) => e.kind === "gripper");
+    for (const g of grips) expect(["legit", "rogue"]).toContain(g.panel);
+    for (const panel of ["legit", "rogue"]) {
+      const mine = grips.filter((g) => g.panel === panel).map((g) => g.value);
+      expect(mine.sort()).toEqual([...OG.GRIPPER_ACTIONS].sort());
+    }
+    expect(grips.filter((g) => g.panel === "legit").every((g) => g.pad.startsWith("L"))).toBe(true);
+    expect(grips.filter((g) => g.panel === "rogue").every((g) => g.pad.startsWith("R"))).toBe(true);
+  });
+
+  it("binds every backend-validated preset and gripper action", async () => {
+    const {AUX_KEYS} = await import("../useKeyboardControl.js");
+    const entries = Object.values(AUX_KEYS);
+    const presets = entries.filter((e) => e.kind === "arm").map((e) => e.value);
+    const actions = entries.filter((e) => e.kind === "gripper").map((e) => e.value);
+    expect(presets.sort()).toEqual([...OG.ARM_PRESETS].sort());
+    expect([...new Set(actions)].sort()).toEqual([...OG.GRIPPER_ACTIONS].sort());
+    expect(entries.filter((e) => e.kind === "estop")).toHaveLength(1);
+  });
+
+  /* A key that both moves and actuates would fire two commands per press. */
+  it("never reuses a movement key", async () => {
+    const {AUX_KEYS, BINDINGS} = await import("../useKeyboardControl.js");
+    const movement = [...Object.keys(BINDINGS.legit), ...Object.keys(BINDINGS.rogue)];
+    for (const key of Object.keys(AUX_KEYS)) {
+      expect(movement).not.toContain(key);
+    }
+  });
+
+  /* The pad and the keyboard must issue the same command for the same action,
+   * or the on-screen keycaps become a lie. */
+  it("matches the buttons the gamepad table binds", async () => {
+    const {AUX_KEYS} = await import("../useKeyboardControl.js");
+    const srcDir = new URL("../../", import.meta.url).pathname;
+    const source = readFileSync(join(srcDir, "components", "DualSense.jsx"), "utf8");
+
+    const byPad = {};
+    for (const entry of Object.values(AUX_KEYS)) byPad[entry.pad] = entry.value;
+
+    for (const [, preset, hotkey] of source.matchAll(
+      /preset: '(\w+)',[\s\S]{0,120}?hotkey: '(\w)'/g,
+    )) {
+      const pad = Object.entries(AUX_KEYS)
+        .find(([k]) => k.toUpperCase() === hotkey.toUpperCase())?.[1];
+      expect(pad, `hotkey ${hotkey} is not bound on the keyboard`).toBeDefined();
+      expect(pad.value).toBe(preset);
+    }
+
+    for (const [, action, hotkey] of source.matchAll(
+      /action: '(\w+)',[\s\S]{0,80}?hotkey: '(\w)'/g,
+    )) {
+      const bound = AUX_KEYS[hotkey.toLowerCase()];
+      expect(bound, `hotkey ${hotkey} is not bound on the keyboard`).toBeDefined();
+      expect(bound.value).toBe(action);
+    }
+
+    expect(byPad.L1).toBe("open");
+    expect(byPad.L2).toBe("close");
+    expect(byPad.R1).toBe("open");
+    expect(byPad.R2).toBe("close");
+    expect(byPad.circle).toBeNull();
+  });
+});
+
+describe("aux command attribution", () => {
+  /* Regression: a denied plane stays 'denied' until it is grabbed again. If
+   * that counted as driving, every later arm press would be redirected to a
+   * plane that can never hold a lease and would come back rejected. */
+  it("never attributes an arm press to a denied plane", async () => {
+    const src = readFileSync(
+      new URL("../useController.js", import.meta.url).pathname,
+      "utf8",
+    );
+    const owner = src.slice(src.indexOf("const leaseOwner"), src.indexOf("const aux = useMemo"));
+    expect(owner).toContain("'starting'");
+    expect(owner).toContain("'streaming'");
+    expect(owner).not.toMatch(/phase !== ['"]idle['"]/);
+  });
+});

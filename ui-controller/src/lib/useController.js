@@ -1,4 +1,4 @@
-import {useCallback, useEffect, useRef, useState} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEADZONE,
   FALLBACK_TELEOP_CONFIG,
@@ -11,6 +11,7 @@ import {
   getTimeline,
   padEstopPressed,
   padStickFor,
+  readManipulator,
   readPosition,
   rejectionReasons,
   resetBackend,
@@ -21,15 +22,40 @@ import {
   teleopStart,
   teleopStop,
   zoneAt,
-} from "./omniguard.js";
+} from './omniguard.js';
 
-const PANEL_IDS = ["legit", "rogue"];
+const PANEL_IDS = ['legit', 'rogue'];
+
+/* Speed requested when taking a lease purely to actuate the arm. 0.8 m/s is
+ * what the documented curl flow uses and sits inside the band the risk model
+ * treats as routine, so authorising the arm does not read as an anomaly. */
+const AUX_LEASE_SPEED = 0.8;
+/* Renew rather than gamble on a lease that is about to lapse mid-request. */
+const AUX_LEASE_MARGIN_MS = 3000;
+
+/* Physical button -> command. Preset and action names mirror the sets
+ * backend/teleop.py validates against; anything else is INVALID_ARM_PRESET /
+ * INVALID_GRIPPER_ACTION server-side. */
+/* Standard-mapping button indices. The gripper is split by plane so each side
+ * of the pad belongs to one control plane, mirroring the thumbsticks:
+ * left shoulders drive the valid operator, right shoulders drive the hacker.
+ * The hacker's presses are expected to be rejected -- that is the demo. */
+export const AUX_BUTTONS = [
+  [12, (a) => a.armPreset('reach')],
+  [13, (a) => a.armPreset('stow')],
+  [14, (a) => a.armPreset('carry')],
+  [15, (a) => a.armPreset('inspect')],
+  [4, (a) => a.gripperFor('legit', 'open')], // L1
+  [6, (a) => a.gripperFor('legit', 'close')], // L2
+  [5, (a) => a.gripperFor('rogue', 'open')], // R1
+  [7, (a) => a.gripperFor('rogue', 'close')], // R2
+];
 const IDLE_POLL_MS = 1500;
 const ACTIVE_POLL_MS = 350;
 
-const blankStick = () => ({vec: {x: 0, y: 0}, mag: 0});
+const blankStick = () => ({ vec: { x: 0, y: 0 }, mag: 0 });
 const blankSession = () => ({
-  phase: "idle", // idle | starting | streaming | denied
+  phase: 'idle', // idle | starting | streaming | denied
   controlId: null,
   expiresAt: 0,
   maxSpeed: null,
@@ -39,7 +65,7 @@ const blankSession = () => ({
   padActive: false,
 });
 const blankView = () => ({
-  lamp: "idle",
+  lamp: 'idle',
   lampLabel: null,
   speed: 0,
   zone: null,
@@ -50,8 +76,7 @@ const blankView = () => ({
   ai: null,
 });
 
-const fromEntries = (fn) =>
-  Object.fromEntries(PANEL_IDS.map((id) => [id, fn(id)]));
+const fromEntries = (fn) => Object.fromEntries(PANEL_IDS.map((id) => [id, fn(id)]));
 let logSeq = 0;
 
 export function useController(cfg) {
@@ -60,13 +85,21 @@ export function useController(cfg) {
 
   const sticks = useRef(fromEntries(blankStick));
   const sessions = useRef(fromEntries(blankSession));
+  /* Arm and gripper need a lease, but they are not movement, so they must not
+   * depend on a stick being held. These are short-lived leases taken on demand
+   * exactly as the documented curl flow does: start, then actuate. */
+  const auxLeases = useRef(fromEntries(() => null));
+  /* A held button can ask for a lease many times before the first answer comes
+   * back. Without this, every one of those calls opens its own lease and the
+   * backend sees a storm of teleop_start. */
+  const leaseInflight = useRef(fromEntries(() => null));
 
   const [teleopConfig, setTeleopConfig] = useState(FALLBACK_TELEOP_CONFIG);
   const [gatewayReady, setGatewayReady] = useState(null); // null = unknown
   const teleopRef = useRef(FALLBACK_TELEOP_CONFIG);
   teleopRef.current = teleopConfig;
 
-  const [options, setOptions] = useState({overspeed: false});
+  const [options, setOptions] = useState({ overspeed: false });
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
@@ -76,26 +109,32 @@ export function useController(cfg) {
     target: null,
     setpoints: [],
     trail: [],
+    manipulator: null,
   });
   const [status, setStatus] = useState({});
   const [events, setEvents] = useState([]);
   const [timeline, setTimeline] = useState([]);
   const [health, setHealth] = useState(null);
-  const [padLabel, setPadLabel] = useState("Gamepad: checking…");
+  const [padLabel, setPadLabel] = useState('Gamepad: checking…');
   /* Mutable so the pad can drive the sticks at display rate without re-rendering. */
-  const padRef = useRef(
-    fromEntries(() => ({vec: {x: 0, y: 0}, mag: 0, active: false})),
-  );
+  const padRef = useRef(fromEntries(() => ({ vec: { x: 0, y: 0 }, mag: 0, active: false })));
   const estopRef = useRef(null);
+  const auxRef = useRef(null);
   const [resetting, setResetting] = useState(false);
 
   /* Physical pose, from the backend only. Never estimated — a map that invents
    * a position makes every zone read-out a guess. */
   const robotRef = useRef(null);
   const trailRef = useRef([]);
+  /* Last bridge payload, and the last arm/gripper command the backend accepted
+   * from this UI. readManipulator prefers the bridge and falls back to these —
+   * mock mode never reports arm/gripper at all, so without them the map would
+   * stay blank for the whole demo. */
+  const bridgeRef = useRef(null);
+  const commandedRef = useRef({ arm: null, gripper: null });
 
   const patch = useCallback((id, next) => {
-    setView((prev) => ({...prev, [id]: {...prev[id], ...next}}));
+    setView((prev) => ({ ...prev, [id]: { ...prev[id], ...next } }));
   }, []);
 
   const pushLog = useCallback((id, decision, detail) => {
@@ -103,13 +142,13 @@ export function useController(cfg) {
       const log = [
         {
           id: ++logSeq,
-          time: new Date().toLocaleTimeString([], {hour12: false}),
+          time: new Date().toLocaleTimeString([], { hour12: false }),
           decision,
           detail,
         },
         ...prev[id].log,
       ].slice(0, 40);
-      return {...prev, [id]: {...prev[id], log}};
+      return { ...prev, [id]: { ...prev[id], log } };
     });
   }, []);
 
@@ -145,7 +184,7 @@ export function useController(cfg) {
       const controlId = s.controlId;
       sessions.current[id] = blankSession();
       patch(id, {
-        lamp: "idle",
+        lamp: 'idle',
         lampLabel: null,
         reasons: [],
         lease: null,
@@ -155,7 +194,7 @@ export function useController(cfg) {
       });
       if (!controlId) return;
       try {
-        await teleopStop(cfgRef.current, {controlId, reason});
+        await teleopStop(cfgRef.current, { controlId, reason });
       } catch {
         /* The backend deadman is the real guarantee; a failed stop call must not
          * throw into the loop. */
@@ -164,31 +203,42 @@ export function useController(cfg) {
     [patch],
   );
 
+  /* An aux lease outlives the press that created it, so every stop path has to
+   * hand it back — otherwise the robot stays leased after an emergency stop. */
+  const releaseAuxLease = useCallback(async (id, reason) => {
+    const held = auxLeases.current[id];
+    if (!held) return;
+    auxLeases.current[id] = null;
+    try {
+      await teleopStop(cfgRef.current, { controlId: held.controlId, reason });
+    } catch {
+      /* The backend lease TTL is the real guarantee. */
+    }
+  }, []);
+
   /* --------------------------------------------------------------- start */
   const startSession = useCallback(
     async (id, point, speed) => {
       const s = sessions.current[id];
-      s.phase = "starting";
+      s.phase = 'starting';
       s.inflight = true;
-      patch(id, {lamp: "idle", lampLabel: "AUTHORIZING"});
+      patch(id, { lamp: 'idle', lampLabel: 'AUTHORIZING' });
       try {
-        const res = await teleopStart(cfgRef.current, id, {...point, speed});
+        const res = await teleopStart(cfgRef.current, id, { ...point, speed });
         const ai = res.ai ?? null;
-        if (res.final_decision === "ALLOW" && res.control_id) {
+        if (res.final_decision === 'ALLOW' && res.control_id) {
           sessions.current[id] = {
             ...blankSession(),
-            phase: "streaming",
+            phase: 'streaming',
             controlId: res.control_id,
-            expiresAt: res.expires_at
-              ? Date.parse(res.expires_at)
-              : Date.now() + 30_000,
+            expiresAt: res.expires_at ? Date.parse(res.expires_at) : Date.now() + 30_000,
             maxSpeed: res.max_speed ?? null,
             allowedZones: res.allowed_zones ?? null,
             sequence: 0,
           };
           patch(id, {
-            lamp: "allow",
-            lampLabel: "LEASE ACTIVE",
+            lamp: 'allow',
+            lampLabel: 'LEASE ACTIVE',
             reasons: [res.policy_decision].filter(Boolean),
             lease: {
               controlId: res.control_id,
@@ -198,37 +248,33 @@ export function useController(cfg) {
             },
             ai,
           });
-          pushLog(id, "ALLOW", `lease issued · ${res.policy_decision ?? ""}`);
+          pushLog(id, 'ALLOW', `lease issued · ${res.policy_decision ?? ''}`);
         } else {
-          sessions.current[id] = {...blankSession(), phase: "denied"};
-          const hold = res.final_decision === "HOLD";
+          sessions.current[id] = { ...blankSession(), phase: 'denied' };
+          const hold = res.final_decision === 'HOLD';
           patch(id, {
-            lamp: hold ? "hold" : "block",
+            lamp: hold ? 'hold' : 'block',
             lampLabel: null,
-            reasons: res.reasons?.length
-              ? res.reasons
-              : [res.policy_decision].filter(Boolean),
+            reasons: res.reasons?.length ? res.reasons : [res.policy_decision].filter(Boolean),
             lease: null,
             ai,
           });
           pushLog(
             id,
-            hold ? "HOLD" : "BLOCK",
-            (res.reasons ?? []).join(", ") || res.policy_decision || "",
+            hold ? 'HOLD' : 'BLOCK',
+            (res.reasons ?? []).join(', ') || res.policy_decision || '',
           );
         }
       } catch (err) {
-        sessions.current[id] = {...blankSession(), phase: "denied"};
+        sessions.current[id] = { ...blankSession(), phase: 'denied' };
         const missing = err.status === 404;
         patch(id, {
-          lamp: "block",
-          lampLabel: missing ? "GATEWAY MISSING" : "API ERROR",
-          reasons: [
-            missing ? "TELEOP_GATEWAY_NOT_DEPLOYED" : String(err.message),
-          ],
+          lamp: 'block',
+          lampLabel: missing ? 'GATEWAY MISSING' : 'API ERROR',
+          reasons: [missing ? 'TELEOP_GATEWAY_NOT_DEPLOYED' : String(err.message)],
           lease: null,
         });
-        pushLog(id, "ERROR", String(err.message));
+        pushLog(id, 'ERROR', String(err.message));
       } finally {
         sessions.current[id].inflight = false;
       }
@@ -251,32 +297,28 @@ export function useController(cfg) {
           y: point.y,
           speed,
         });
-        if (
-          res?.status &&
-          res.status !== "EXECUTED" &&
-          res.status !== "QUEUED"
-        ) {
+        if (res?.status && res.status !== 'EXECUTED' && res.status !== 'QUEUED') {
           const reasons = rejectionReasons(res);
-          const label = reasons.join(", ") || res.status;
-          pushLog(id, "BLOCK", label);
+          const label = reasons.join(', ') || res.status;
+          pushLog(id, 'BLOCK', label);
           patch(id, {
-            lamp: "block",
+            lamp: 'block',
             lampLabel: res.status,
             reasons: reasons.length ? reasons : [res.status],
           });
-          await stopSession(id, "REJECTED_BY_BACKEND");
+          await stopSession(id, 'REJECTED_BY_BACKEND');
         }
       } catch (err) {
         /* Fail closed: any rejected packet ends the session immediately. */
         const fromBody = rejectionReasons(err.body);
         const reasons = fromBody.length ? fromBody : [String(err.message)];
         patch(id, {
-          lamp: "block",
-          lampLabel: err.status === 409 ? "LEASE INVALID" : "REJECTED",
+          lamp: 'block',
+          lampLabel: err.status === 409 ? 'LEASE INVALID' : 'REJECTED',
           reasons,
         });
-        pushLog(id, "BLOCK", reasons.join(", "));
-        await stopSession(id, "REJECTED_BY_BACKEND");
+        pushLog(id, 'BLOCK', reasons.join(', '));
+        await stopSession(id, 'REJECTED_BY_BACKEND');
       } finally {
         const cur = sessions.current[id];
         if (cur) cur.inflight = false;
@@ -297,12 +339,13 @@ export function useController(cfg) {
    */
   useEffect(() => {
     if (!navigator.getGamepads) {
-      setPadLabel("Gamepad: needs https or 127.0.0.1");
+      setPadLabel('Gamepad: needs https or 127.0.0.1');
       return undefined;
     }
 
     let frame;
     let estopWasDown = false;
+    const auxWasDown = {};
     let lastId = null;
 
     const sample = () => {
@@ -313,10 +356,14 @@ export function useController(cfg) {
           lastId = null;
           /* Chrome exposes nothing until the pad sends input, so "none" is not
            * the same as "not plugged in". Say what actually unblocks it. */
-          setPadLabel("Gamepad: press any button to connect");
+          setPadLabel('Gamepad: press any button to connect');
           for (const id of PANEL_IDS) {
             if (padRef.current[id].active) {
-              padRef.current[id] = {vec: {x: 0, y: 0}, mag: 0, active: false};
+              padRef.current[id] = {
+                vec: { x: 0, y: 0 },
+                mag: 0,
+                active: false,
+              };
               sticks.current[id] = blankStick();
             }
           }
@@ -327,9 +374,9 @@ export function useController(cfg) {
 
       if (pad.index !== lastId) {
         lastId = pad.index;
-        const nonStandard = pad.mapping !== "standard";
+        const nonStandard = pad.mapping !== 'standard';
         setPadLabel(
-          `Gamepad: ${pad.id.slice(0, 28)}${nonStandard ? " (non-standard mapping)" : ""}`,
+          `Gamepad: ${pad.id.slice(0, 28)}${nonStandard ? ' (non-standard mapping)' : ''}`,
         );
       }
 
@@ -338,7 +385,7 @@ export function useController(cfg) {
         const slot = padRef.current[id];
         if (next.active) {
           padRef.current[id] = next;
-          sticks.current[id] = {vec: next.vec, mag: next.mag};
+          sticks.current[id] = { vec: next.vec, mag: next.mag };
         } else if (slot.active) {
           /* Released: publish an explicit zero so the thumb springs back.
            * Publishing null here is what used to leave it stuck deflected. */
@@ -347,10 +394,21 @@ export function useController(cfg) {
         }
       });
 
+      /* Standard mapping: L1=4 R1=5, d-pad up/down/left/right = 12/13/14/15.
+       * Rising edge only — a held button must not stream commands. */
+      const aux = auxRef.current;
+      if (aux) {
+        for (const [index, fire] of AUX_BUTTONS) {
+          const down = pad.buttons?.[index]?.pressed === true;
+          if (down && !auxWasDown[index]) fire(aux);
+          auxWasDown[index] = down;
+        }
+      }
+
       const estop = padEstopPressed(pad);
       if (estop && !estopWasDown) {
         for (const id of PANEL_IDS) {
-          padRef.current[id] = {vec: {x: 0, y: 0}, mag: 0, active: false};
+          padRef.current[id] = { vec: { x: 0, y: 0 }, mag: 0, active: false };
           sticks.current[id] = blankStick();
         }
         estopRef.current?.();
@@ -379,21 +437,21 @@ export function useController(cfg) {
         const s = sessions.current[id];
 
         if (stick.mag <= DEADZONE) {
-          if (s.phase === "streaming" || s.phase === "starting")
-            stopSession(id, "JOYSTICK_RELEASED");
-          else if (s.phase === "denied") {
+          if (s.phase === 'streaming' || s.phase === 'starting')
+            stopSession(id, 'JOYSTICK_RELEASED');
+          else if (s.phase === 'denied') {
             /* keep the verdict on screen until re-grab */
           }
           continue;
         }
 
-        const overspeed = id === "rogue" && optionsRef.current.overspeed;
-        const speed = speedFor(stick.mag, {maxSpeed, overspeed});
+        const overspeed = id === 'rogue' && optionsRef.current.overspeed;
+        const speed = speedFor(stick.mag, { maxSpeed, overspeed });
 
         /* Without a real pose we cannot compute a setpoint honestly. */
         const base = robotRef.current;
         if (!base) {
-          patch(id, {speed, zone: null, setpoint: null});
+          patch(id, { speed, zone: null, setpoint: null });
           continue;
         }
 
@@ -409,19 +467,23 @@ export function useController(cfg) {
             y: clamp(sp.y, bounds[1], bounds[3]),
           };
         }
-        setpoints.push({id, sp});
-        patch(id, {speed, zone: zoneAt(sp.x, sp.y, conf.zones), setpoint: sp});
+        setpoints.push({ id, sp });
+        patch(id, {
+          speed,
+          zone: zoneAt(sp.x, sp.y, conf.zones),
+          setpoint: sp,
+        });
 
         if (s.inflight) continue;
 
-        if (s.phase === "idle") {
+        if (s.phase === 'idle') {
           startSession(id, sp, speed);
           continue;
         }
-        if (s.phase === "streaming") {
+        if (s.phase === 'streaming') {
           if (Date.now() >= s.expiresAt) {
             /* Lease aged out mid-hold: re-authorize rather than keep streaming. */
-            pushLog(id, "HOLD", "lease expired — re-authorizing");
+            pushLog(id, 'HOLD', 'lease expired — re-authorizing');
             sessions.current[id] = blankSession();
             startSession(id, sp, speed);
             continue;
@@ -430,7 +492,7 @@ export function useController(cfg) {
         }
       }
 
-      setWorld((prev) => ({...prev, setpoints}));
+      setWorld((prev) => ({ ...prev, setpoints }));
     };
 
     const handle = setInterval(tick, tickMs);
@@ -447,6 +509,7 @@ export function useController(cfg) {
       try {
         const s = await getState(c);
         const bridge = s.isaac_bridge_state ?? null;
+        bridgeRef.current = bridge;
         const pos = readPosition(bridge);
         if (pos) {
           robotRef.current = pos;
@@ -470,8 +533,9 @@ export function useController(cfg) {
           setWorld((prev) => ({
             ...prev,
             robot: pos,
-            target: readPosition({position: bridge?.target}),
+            target: readPosition({ position: bridge?.target }),
             trail: trailRef.current,
+            manipulator: readManipulator(bridge, commandedRef.current),
           }));
         }
       } catch {
@@ -479,18 +543,16 @@ export function useController(cfg) {
           setStatus((prev) => ({
             ...prev,
             online: false,
-            robot_status: "API DOWN",
+            robot_status: 'API DOWN',
           }));
       }
 
       const [ev, tl] = await Promise.allSettled([getEvents(c), getTimeline(c)]);
       if (!alive) return;
-      if (ev.status === "fulfilled") setEvents(ev.value.slice(0, 12));
-      if (tl.status === "fulfilled") setTimeline(tl.value);
+      if (ev.status === 'fulfilled') setEvents(ev.value.slice(0, 12));
+      if (tl.status === 'fulfilled') setTimeline(tl.value);
 
-      const active = PANEL_IDS.some(
-        (id) => sessions.current[id].phase === "streaming",
-      );
+      const active = PANEL_IDS.some((id) => sessions.current[id].phase === 'streaming');
       handle = setTimeout(poll, active ? ACTIVE_POLL_MS : IDLE_POLL_MS);
     };
 
@@ -519,22 +581,22 @@ export function useController(cfg) {
     const halt = (reason) => {
       for (const id of PANEL_IDS) {
         sticks.current[id] = blankStick();
-        if (sessions.current[id].phase !== "idle") stopSession(id, reason);
+        if (sessions.current[id].phase !== 'idle') stopSession(id, reason);
       }
     };
     const onVisibility = () => {
-      if (document.hidden) halt("PAGE_HIDDEN");
+      if (document.hidden) halt('PAGE_HIDDEN');
     };
-    const onBlur = () => halt("WINDOW_BLUR");
-    const onHide = () => halt("PAGE_HIDE");
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("blur", onBlur);
-    window.addEventListener("pagehide", onHide);
+    const onBlur = () => halt('WINDOW_BLUR');
+    const onHide = () => halt('PAGE_HIDE');
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('pagehide', onHide);
     return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("blur", onBlur);
-      window.removeEventListener("pagehide", onHide);
-      halt("COMPONENT_UNMOUNTED");
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('pagehide', onHide);
+      halt('COMPONENT_UNMOUNTED');
     };
   }, [stopSession]);
 
@@ -543,8 +605,7 @@ export function useController(cfg) {
   useEffect(() => {
     estopRef.current = () => {
       for (const id of PANEL_IDS) {
-        if (sessions.current[id].phase !== "idle")
-          stopSession(id, "GAMEPAD_EMERGENCY_STOP");
+        if (sessions.current[id].phase !== 'idle') stopSession(id, 'GAMEPAD_EMERGENCY_STOP');
       }
     };
     return () => {
@@ -552,16 +613,224 @@ export function useController(cfg) {
     };
   }, [stopSession]);
 
+  const emergencyStop = useCallback(() => {
+    for (const id of PANEL_IDS) {
+      sticks.current[id] = blankStick();
+      if (sessions.current[id].phase !== 'idle') stopSession(id, 'EMERGENCY_STOP');
+      releaseAuxLease(id, 'EMERGENCY_STOP');
+    }
+  }, [stopSession, releaseAuxLease]);
+
+  /* ------------------------------------------------------------- arm/grip
+   * Arm and gripper commands ride the same teleop lease as movement: without an
+   * active lease there is nothing to authorize them, and a rejection tears the
+   * lease down exactly like a rejected movement packet. */
+  /* A lease for an arm/gripper press: reuse the movement lease if the stick is
+   * held, reuse a still-valid aux lease, otherwise take a fresh one. Taking one
+   * runs the full risk evaluation, so a hacker's gripper press produces a real
+   * verdict rather than a generic "no lease". */
+  const ensureLease = useCallback(
+    async (id) => {
+      const moving = sessions.current[id]?.controlId;
+      if (moving) return moving;
+
+      const held = auxLeases.current[id];
+      if (held && held.expiresAt - Date.now() > AUX_LEASE_MARGIN_MS) return held.controlId;
+
+      if (leaseInflight.current[id]) return leaseInflight.current[id];
+
+      /* Target the pose the robot already holds, so taking the lease authorises
+       * the arm without also commanding the base to move. */
+      const point = robotRef.current ?? { x: 0, y: 0 };
+      patch(id, { lamp: 'idle', lampLabel: 'AUTHORIZING' });
+      const attempt = (async () => {
+        try {
+          const res = await teleopStart(cfgRef.current, id, {
+            ...point,
+            speed: AUX_LEASE_SPEED,
+          });
+          const ai = res.ai ?? null;
+          if (res.final_decision === 'ALLOW' && res.control_id) {
+            auxLeases.current[id] = {
+              controlId: res.control_id,
+              expiresAt: res.expires_at ? Date.parse(res.expires_at) : Date.now() + 30_000,
+            };
+            patch(id, {
+              lamp: 'allow',
+              lampLabel: 'LEASE ACTIVE',
+              reasons: [res.policy_decision].filter(Boolean),
+              lease: {
+                controlId: res.control_id,
+                expiresAt: res.expires_at,
+                maxSpeed: res.max_speed,
+              },
+              ai,
+            });
+            return res.control_id;
+          }
+          auxLeases.current[id] = null;
+          const hold = res.final_decision === 'HOLD';
+          patch(id, {
+            lamp: hold ? 'hold' : 'block',
+            lampLabel: null,
+            reasons: res.reasons?.length ? res.reasons : [res.policy_decision].filter(Boolean),
+            lease: null,
+            ai,
+          });
+          pushLog(
+            id,
+            hold ? 'HOLD' : 'BLOCK',
+            (res.reasons ?? []).join(', ') || res.policy_decision || '',
+          );
+          return null;
+        } catch (err) {
+          auxLeases.current[id] = null;
+          const missing = err.status === 404;
+          patch(id, {
+            lamp: 'block',
+            lampLabel: missing ? 'GATEWAY MISSING' : 'API ERROR',
+            reasons: [missing ? 'TELEOP_GATEWAY_NOT_DEPLOYED' : String(err.message)],
+            lease: null,
+          });
+          pushLog(id, 'ERROR', String(err.message));
+          return null;
+        }
+      })();
+
+      leaseInflight.current[id] = attempt;
+      try {
+        return await attempt;
+      } finally {
+        leaseInflight.current[id] = null;
+      }
+    },
+    [patch, pushLog],
+  );
+
+  const handleLeaseCommand = useCallback(
+    async (id, label, invoke) => {
+      const controlId = await ensureLease(id);
+      if (!controlId) return false; // ensureLease has already surfaced the verdict
+      try {
+        const res = await invoke(controlId);
+        if (res?.status && !['EXECUTED', 'QUEUED'].includes(res.status)) {
+          const reasons = rejectionReasons(res);
+          sessions.current[id] = blankSession();
+          auxLeases.current[id] = null;
+          patch(id, {
+            lamp: 'block',
+            lampLabel: res.status,
+            reasons,
+            lease: null,
+          });
+          pushLog(id, 'BLOCK', reasons.join(', ') || res.status);
+          return false;
+        }
+        pushLog(id, 'ALLOW', `${label} ${(res?.status ?? 'QUEUED').toLowerCase()}`);
+        return true;
+      } catch (err) {
+        const fromBody = rejectionReasons(err.body);
+        const reasons = fromBody.length ? fromBody : [String(err.message)];
+        sessions.current[id] = blankSession();
+        auxLeases.current[id] = null;
+        patch(id, {
+          lamp: 'block',
+          lampLabel: 'REJECTED',
+          reasons,
+          lease: null,
+        });
+        pushLog(id, 'BLOCK', reasons.join(', '));
+        return false;
+      }
+    },
+    [ensureLease, patch, pushLog],
+  );
+
+  /* Redraw the manipulator the moment a command is accepted rather than waiting
+   * up to a poll interval for the next /api/state. */
+  const publishManipulator = useCallback(() => {
+    setWorld((prev) => ({
+      ...prev,
+      manipulator: readManipulator(bridgeRef.current, commandedRef.current),
+    }));
+  }, []);
+
+  const sendArmPreset = useCallback(
+    async (id, preset) => {
+      const accepted = await handleLeaseCommand(id, `ARM ${preset}`, (controlId) =>
+        teleopArmPreset(cfgRef.current, { controlId, preset }),
+      );
+      if (accepted) {
+        commandedRef.current = { ...commandedRef.current, arm: preset };
+        publishManipulator();
+      }
+      return accepted;
+    },
+    [handleLeaseCommand, publishManipulator],
+  );
+
+  const sendGripper = useCallback(
+    async (id, action) => {
+      const accepted = await handleLeaseCommand(id, `GRIPPER ${action}`, (controlId) =>
+        teleopGripper(cfgRef.current, { controlId, action }),
+      );
+      if (accepted) {
+        commandedRef.current = { ...commandedRef.current, gripper: action };
+        publishManipulator();
+      }
+      return accepted;
+    },
+    [handleLeaseCommand, publishManipulator],
+  );
+
+  /* The physical d-pad and shoulders drive whichever plane currently holds a
+   * lease; without one, handleLeaseCommand reports NO_ACTIVE_TELEOP_LEASE. */
+  const leaseOwner = useCallback(() => {
+    for (const id of PANEL_IDS) if (sessions.current[id].controlId) return id;
+    /* No lease: attribute the attempt to whoever is actually driving, so a
+     * hacker's blocked arm command is reported on the hacker's panel instead of
+     * looking like the operator fumbled.
+     *
+     * Only live phases count. 'denied' is sticky -- it survives until the plane
+     * is grabbed again -- so treating it as driving would permanently redirect
+     * every arm press to a plane that can never hold a lease, and every press
+     * would come back rejected. */
+    for (const id of PANEL_IDS) {
+      const phase = sessions.current[id].phase;
+      if (phase === 'starting' || phase === 'streaming') return id;
+    }
+    return PANEL_IDS[0];
+  }, []);
+
+  /* The same three commands the d-pad, shoulders and Circle issue, bound to the
+   * lease holder so the keyboard is a peer input rather than a special case. */
+  const aux = useMemo(
+    () => ({
+      armPreset: (preset) => sendArmPreset(leaseOwner(), preset),
+      /* Gripper is addressed by plane, so a press always says who is asking. */
+      gripperFor: (panel, action) => sendGripper(panel, action),
+      emergencyStop,
+    }),
+    [leaseOwner, sendArmPreset, sendGripper, emergencyStop],
+  );
+
+  useEffect(() => {
+    auxRef.current = aux;
+    return () => {
+      auxRef.current = null;
+    };
+  }, [aux]);
+
   /* ---------------------------------------------------------------- reset */
   const reset = useCallback(async () => {
     setResetting(true);
     for (const id of PANEL_IDS) {
       sticks.current[id] = blankStick();
-      if (sessions.current[id].phase !== "idle")
-        await stopSession(id, "DEMO_RESET");
+      if (sessions.current[id].phase !== 'idle') await stopSession(id, 'DEMO_RESET');
+      await releaseAuxLease(id, 'DEMO_RESET');
       sessions.current[id] = blankSession();
     }
-    setOptions({overspeed: false});
+    setOptions({ overspeed: false });
     setView(fromEntries(blankView));
     try {
       await resetBackend(cfgRef.current);
@@ -571,66 +840,17 @@ export function useController(cfg) {
     /* Security state is reset; physical position is NOT invented — the next
      * poll reports wherever Isaac actually left the robot. */
     trailRef.current = [];
+    commandedRef.current = { arm: null, gripper: null };
     setEvents([]);
     setTimeline([]);
-    setWorld((prev) => ({...prev, trail: [], setpoints: []}));
+    setWorld((prev) => ({
+      ...prev,
+      trail: [],
+      setpoints: [],
+      manipulator: null,
+    }));
     setResetting(false);
-  }, [stopSession]);
-
-  /* -------------------------------------------------------------- arm/grip */
-  const handleLeaseCommand = useCallback(
-    async (id, label, invoke) => {
-      const controlId = sessions.current[id]?.controlId;
-      if (!controlId) {
-        const reasons = ["NO_ACTIVE_TELEOP_LEASE"];
-        patch(id, {lamp: "block", lampLabel: "NO LEASE", reasons});
-        pushLog(id, "BLOCK", reasons[0]);
-        return;
-      }
-
-      try {
-        const res = await invoke(controlId);
-        if (res?.status && !["EXECUTED", "QUEUED"].includes(res.status)) {
-          const reasons = rejectionReasons(res);
-          const detail = reasons.join(", ") || res.status;
-          sessions.current[id] = blankSession();
-          patch(id, {
-            lamp: "block",
-            lampLabel: res.status,
-            reasons,
-            lease: null,
-          });
-          pushLog(id, "BLOCK", detail);
-          return;
-        }
-        const status = res?.status ?? "QUEUED";
-        pushLog(id, "ALLOW", `${label} ${status.toLowerCase()}`);
-      } catch (err) {
-        const fromBody = rejectionReasons(err.body);
-        const reasons = fromBody.length ? fromBody : [String(err.message)];
-        sessions.current[id] = blankSession();
-        patch(id, {lamp: "block", lampLabel: "REJECTED", reasons, lease: null});
-        pushLog(id, "BLOCK", reasons.join(", "));
-      }
-    },
-    [patch, pushLog],
-  );
-
-  const sendArmPreset = useCallback(
-    (id, preset) =>
-      handleLeaseCommand(id, `ARM ${preset}`, (controlId) =>
-        teleopArmPreset(cfgRef.current, {controlId, preset}),
-      ),
-    [handleLeaseCommand],
-  );
-
-  const sendGripper = useCallback(
-    (id, action) =>
-      handleLeaseCommand(id, `GRIPPER ${action}`, (controlId) =>
-        teleopGripper(cfgRef.current, {controlId, action}),
-      ),
-    [handleLeaseCommand],
-  );
+  }, [stopSession, releaseAuxLease]);
 
   return {
     view,
@@ -644,11 +864,14 @@ export function useController(cfg) {
     options,
     setOptions,
     setStick,
+    stickRef: sticks,
     padRef,
     padLabel,
     reset,
     resetting,
     sendArmPreset,
     sendGripper,
+    emergencyStop,
+    aux,
   };
 }

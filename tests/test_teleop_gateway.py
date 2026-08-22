@@ -453,3 +453,84 @@ def test_stop_accepts_known_lease(monkeypatch):
         },
     ).json()
     assert stop["status"] in {"EXECUTED", "QUEUED", "FAILED"}
+
+
+def test_no_blocking_calls_under_teleop_lock():
+    """The deadman needs TeleopManager._lock every 100 ms.
+
+    Bridge HTTP and the API-state callbacks must therefore never run while it is
+    held: the callbacks re-enter _LOCK (which reset_state holds while calling
+    into the manager), and the bridge calls block for seconds when Isaac is
+    slow, which would stall the 750 ms deadman that stops a runaway robot.
+    """
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "backend" / "teleop.py").read_text()
+    lines = source.splitlines()
+    forbidden = (
+        "maybe_actuate",
+        "_append_event(",
+        "_apply_containment(",
+        "_get_security_state(",
+        "_update_mock_pose(",
+        "_reject_move(",
+        "_reject_aux_command(",
+    )
+
+    offenders = []
+    index = 0
+    while index < len(lines):
+        match = re.match(r"^(\s*)with self\._lock:", lines[index])
+        if not match:
+            index += 1
+            continue
+        indent = len(match.group(1))
+        cursor = index + 1
+        while cursor < len(lines):
+            line = lines[cursor]
+            if line.strip() and (len(line) - len(line.lstrip())) <= indent:
+                break
+            if not line.strip().startswith("#"):
+                for name in forbidden:
+                    if name in line:
+                        offenders.append(f"teleop.py:{cursor + 1}: {line.strip()}")
+            cursor += 1
+        index = cursor
+
+    assert offenders == [], "blocking or re-entrant calls under TeleopManager._lock:\n" + "\n".join(
+        offenders
+    )
+
+
+def test_mock_mode_reports_arm_and_gripper_state(monkeypatch):
+    """Mock mode must report arm/gripper in the same shape the Isaac bridge does.
+
+    Without this /api/state can never show manipulator state unless a real
+    simulator is attached, so any UI reading isaac_bridge_state stays blank.
+    """
+    monkeypatch.setenv("OMNIGUARD_ROBOT_BACKEND", "mock")
+    client.post("/api/reset")
+
+    started = client.post("/api/teleop/start", json=LEGIT).json()
+    control_id = started["control_id"]
+    assert control_id, started
+
+    assert (
+        client.post(
+            "/api/teleop/arm/preset",
+            json={"control_id": control_id, "robot_id": "robot-01", "preset": "carry"},
+        ).json()["status"]
+        == "EXECUTED"
+    )
+    assert (
+        client.post(
+            "/api/teleop/gripper",
+            json={"control_id": control_id, "robot_id": "robot-01", "action": "open"},
+        ).json()["status"]
+        == "EXECUTED"
+    )
+
+    bridge = client.get("/api/state").json()["isaac_bridge_state"]
+    assert bridge["arm"] == {"mode": "preset", "preset": "carry"}
+    assert bridge["gripper"]["action"] == "open"
