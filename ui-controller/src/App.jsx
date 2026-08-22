@@ -200,7 +200,9 @@ export default function App() {
                         ? "Simulation · manual override"
                         : ctl.simulation.phase === "resuming"
                           ? "Simulation · resuming"
-                          : "Simulation · A ⇄ B"
+                          : ctl.simulation.scenario === "zone-a-perimeter"
+                            ? "Simulation · Zone A patrol"
+                            : "Simulation · A ⇄ B"
                       : "Live control"}
                   </span>
                   <span className="chip">{ctl.status.robot_status ?? "—"}</span>

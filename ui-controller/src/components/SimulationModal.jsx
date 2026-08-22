@@ -1,5 +1,14 @@
 import {useEffect} from "react";
-import {Bot, Hand, Play, Route, Square, TimerReset, X} from "lucide-react";
+import {
+  Bot,
+  Hand,
+  Orbit,
+  Play,
+  Route,
+  Square,
+  TimerReset,
+  X,
+} from "lucide-react";
 
 const STATUS = {
   running: {
@@ -26,6 +35,8 @@ export default function SimulationModal({
 }) {
   const active = simulation.enabled;
   const status = STATUS[simulation.phase] ?? STATUS.stopped;
+  const shuttleActive = active && simulation.scenario === "zone-shuttle";
+  const patrolActive = active && simulation.scenario === "zone-a-perimeter";
 
   useEffect(() => {
     const closeOnEscape = (event) => {
@@ -83,14 +94,15 @@ export default function SimulationModal({
             </span>
             {active && (
               <span className="chip">
-                completed legs {simulation.completedLegs}
+                {patrolActive ? "completed laps" : "completed cycles"}{" "}
+                {simulation.completedCycles}
               </span>
             )}
           </div>
 
           <article
             className={`rounded-2xl border p-4 transition-colors
-                               ${active ? "border-info/40 bg-info/[.06]" : "border-line bg-sunken/55"}`}>
+                               ${shuttleActive ? "border-info/40 bg-info/[.06]" : "border-line bg-sunken/55"}`}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <span className="label mb-1.5">Scenario 1</span>
@@ -104,7 +116,7 @@ export default function SimulationModal({
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {active ? (
+                {shuttleActive ? (
                   <button
                     onClick={onStop}
                     className="btn btn-sm border-bad/35 text-bad hover:border-bad/60">
@@ -114,7 +126,7 @@ export default function SimulationModal({
                 ) : (
                   <button
                     onClick={() => onStart("zone-shuttle")}
-                    disabled={disabled}
+                    disabled={disabled || active}
                     className="btn btn-sm btn-primary"
                     title={
                       disabled
@@ -128,7 +140,7 @@ export default function SimulationModal({
               </div>
             </div>
 
-            {active && (
+            {shuttleActive && (
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
                 <div className="rounded-xl border border-line bg-void/35 p-3">
                   <span className="label">Current objective</span>
@@ -137,7 +149,7 @@ export default function SimulationModal({
                       ? "Operator has control"
                       : simulation.phase === "resuming"
                         ? "Waiting for idle hand-back"
-                        : `Proceed to ${simulation.destination === "SAFE_ZONE_A" ? "Zone A" : "Zone B"}`}
+                        : `Proceed to ${simulation.objective}`}
                   </p>
                 </div>
                 <div className="rounded-xl border border-line bg-void/35 p-3">
@@ -147,6 +159,67 @@ export default function SimulationModal({
                     simulation.phase === "resuming"
                       ? "Auto-resume after 3 s idle"
                       : "Controller override ready"}
+                  </p>
+                </div>
+              </div>
+            )}
+          </article>
+
+          <article
+            className={`mt-3 rounded-2xl border p-4 transition-colors
+                               ${patrolActive ? "border-violet/45 bg-violet/[.06]" : "border-line bg-sunken/55"}`}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <span className="label mb-1.5">Scenario 2</span>
+                <h3 className="flex items-center gap-2 text-[14px]">
+                  <Orbit size={15} className="text-violet" aria-hidden="true" />
+                  Zone A perimeter patrol
+                </h3>
+                <p className="mt-2 max-w-[430px] text-[11.5px] leading-relaxed text-dim">
+                  Circle clockwise around Safe Zone A on a four-corner route,
+                  inset from every boundary for warehouse-floor clearance.
+                </p>
+              </div>
+              {patrolActive ? (
+                <button
+                  onClick={onStop}
+                  className="btn btn-sm border-bad/35 text-bad hover:border-bad/60">
+                  <Square size={12} aria-hidden="true" />
+                  Stop
+                </button>
+              ) : (
+                <button
+                  onClick={() => onStart("zone-a-perimeter")}
+                  disabled={disabled || active}
+                  className="btn btn-sm btn-primary"
+                  title={
+                    disabled
+                      ? "Waiting for teleop gateway and robot pose"
+                      : undefined
+                  }>
+                  <Play size={12} aria-hidden="true" />
+                  Start scenario
+                </button>
+              )}
+            </div>
+
+            {patrolActive && (
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-xl border border-line bg-void/35 p-3">
+                  <span className="label">Current objective</span>
+                  <p className="mt-1.5 font-mono text-[12px] text-txt">
+                    {simulation.phase === "override"
+                      ? "Operator has control"
+                      : simulation.phase === "resuming"
+                        ? "Waiting for idle hand-back"
+                        : `Proceed to ${simulation.objective}`}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-line bg-void/35 p-3">
+                  <span className="label">Patrol progress</span>
+                  <p className="mt-1.5 font-mono text-[12px] text-txt">
+                    {simulation.completedCycles} laps ·{" "}
+                    {simulation.completedLegs} legs
                   </p>
                 </div>
               </div>

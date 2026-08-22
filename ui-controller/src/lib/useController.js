@@ -22,7 +22,7 @@ import {
   teleopStart,
   teleopStop,
   zoneAt,
-  zoneCenter,
+  simulationRoute,
 } from "./omniguard.js";
 
 const PANEL_IDS = ["legit", "rogue"];
@@ -56,7 +56,6 @@ const ACTIVE_POLL_MS = 350;
 const SIMULATION_SPEED = 0.8;
 const SIMULATION_ARRIVAL_M = 0.35;
 const SIMULATION_RESUME_MS = 3000;
-const SIMULATION_ROUTE = ["SAFE_ZONE_A", "SAFE_ZONE_B"];
 
 const blankStick = () => ({vec: {x: 0, y: 0}, mag: 0});
 const blankSession = () => ({
@@ -85,7 +84,12 @@ const blankSimulation = () => ({
   scenario: null,
   phase: "stopped", // stopped | running | override | resuming
   destination: null,
+  objective: null,
+  waypointIndex: 0,
+  routeStarted: true,
+  legsInCycle: 0,
   completedLegs: 0,
+  completedCycles: 0,
   resumeAt: null,
 });
 
@@ -252,16 +256,15 @@ export function useController(cfg) {
       await stopSession("legit", "SIMULATION_STOPPED");
     }
     await releaseAuxLease("legit", "SIMULATION_STOPPED");
-    pushLog("legit", "STOP", "zone shuttle stopped · live control restored");
+    pushLog("legit", "STOP", "simulation stopped · live control restored");
   }, [deactivateSimulation, pushLog, releaseAuxLease, stopSession]);
 
   const startSimulation = useCallback(
     async (scenario = "zone-shuttle") => {
-      if (scenario !== "zone-shuttle" || !robotRef.current) return false;
+      if (!robotRef.current) return false;
       const zones = teleopRef.current.zones;
-      const zoneA = zoneCenter(zones, SIMULATION_ROUTE[0]);
-      const zoneB = zoneCenter(zones, SIMULATION_ROUTE[1]);
-      if (!zoneA || !zoneB) return false;
+      const route = simulationRoute(zones, scenario);
+      if (!route?.length) return false;
 
       sticks.current.legit = blankStick();
       if (sessions.current.legit.phase !== "idle") {
@@ -270,22 +273,39 @@ export function useController(cfg) {
       await releaseAuxLease("legit", "SIMULATION_STARTED");
 
       const currentZone = zoneAt(robotRef.current.x, robotRef.current.y, zones);
-      const destination =
-        currentZone === SIMULATION_ROUTE[0]
-          ? SIMULATION_ROUTE[1]
-          : SIMULATION_ROUTE[0];
+      let waypointIndex = 0;
+      if (scenario === "zone-shuttle") {
+        waypointIndex = currentZone === "SAFE_ZONE_A" ? 1 : 0;
+      } else {
+        waypointIndex = route.reduce(
+          (nearest, point, index) => {
+            const distance = Math.hypot(
+              point.x - robotRef.current.x,
+              point.y - robotRef.current.y,
+            );
+            return distance < nearest.distance ? {index, distance} : nearest;
+          },
+          {index: 0, distance: Infinity},
+        ).index;
+      }
+      const waypoint = route[waypointIndex];
       publishSimulation({
         enabled: true,
         scenario,
         phase: "running",
-        destination,
+        destination: waypoint.id,
+        objective: waypoint.label,
+        waypointIndex,
+        routeStarted: scenario === "zone-shuttle",
+        legsInCycle: 0,
         completedLegs: 0,
+        completedCycles: 0,
         resumeAt: null,
       });
       pushLog(
         "legit",
         "ALLOW",
-        `simulation started · proceeding to ${destination}`,
+        `simulation started · proceeding to ${waypoint.label}`,
       );
       return true;
     },
@@ -561,35 +581,44 @@ export function useController(cfg) {
             pushLog(
               "legit",
               "ALLOW",
-              `simulation resumed · proceeding to ${sim.destination}`,
+              `simulation resumed · proceeding to ${sim.objective}`,
             );
           }
 
           if (!manual && sim.phase === "running") {
             const base = robotRef.current;
-            let destination = sim.destination;
-            let waypoint = zoneCenter(conf.zones, destination);
+            const route = simulationRoute(conf.zones, sim.scenario);
+            let waypoint = route?.[sim.waypointIndex] ?? null;
             if (
               base &&
               waypoint &&
               Math.hypot(waypoint.x - base.x, waypoint.y - base.y) <=
                 SIMULATION_ARRIVAL_M
             ) {
-              destination =
-                destination === SIMULATION_ROUTE[0]
-                  ? SIMULATION_ROUTE[1]
-                  : SIMULATION_ROUTE[0];
-              waypoint = zoneCenter(conf.zones, destination);
+              const completedRouteLeg = sim.routeStarted;
+              const waypointIndex = (sim.waypointIndex + 1) % route.length;
+              const legsInCycle = completedRouteLeg
+                ? (sim.legsInCycle + 1) % route.length
+                : 0;
+              const completedCycles =
+                sim.completedCycles +
+                (completedRouteLeg && legsInCycle === 0 ? 1 : 0);
+              waypoint = route[waypointIndex];
               sim = {
                 ...sim,
-                destination,
-                completedLegs: sim.completedLegs + 1,
+                waypointIndex,
+                destination: waypoint.id,
+                objective: waypoint.label,
+                routeStarted: true,
+                legsInCycle,
+                completedLegs: sim.completedLegs + (completedRouteLeg ? 1 : 0),
+                completedCycles,
               };
               publishSimulation(sim);
               pushLog(
                 "legit",
                 "ALLOW",
-                `route leg complete · proceeding to ${destination}`,
+                `${completedRouteLeg ? "route leg complete" : "patrol entry reached"} · proceeding to ${waypoint.label}`,
               );
             }
             if (base && waypoint) {

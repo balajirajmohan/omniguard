@@ -136,6 +136,54 @@ export function zoneCenter(zones, name) {
   };
 }
 
+/** Clockwise patrol points inset from a rectangular zone boundary. The inset is
+ * deliberate: exact edges are legal today, but leaving clearance makes the duty
+ * robust to footprint/collision tolerances in the physical twin. */
+export function zonePerimeter(zones, name, inset = 0.75) {
+  const rect = zones?.[name];
+  const values = rect
+    ? [rect.x_min, rect.x_max, rect.y_min, rect.y_max, inset]
+    : [];
+  if (
+    values.length !== 5 ||
+    values.some((value) => !Number.isFinite(value)) ||
+    inset <= 0 ||
+    rect.x_max - rect.x_min <= inset * 2 ||
+    rect.y_max - rect.y_min <= inset * 2
+  ) {
+    return null;
+  }
+  const left = rect.x_min + inset;
+  const right = rect.x_max - inset;
+  const bottom = rect.y_min + inset;
+  const top = rect.y_max - inset;
+  return [
+    {id: "south-west", label: "south-west corner", x: left, y: bottom},
+    {id: "south-east", label: "south-east corner", x: right, y: bottom},
+    {id: "north-east", label: "north-east corner", x: right, y: top},
+    {id: "north-west", label: "north-west corner", x: left, y: top},
+  ];
+}
+
+/** Route descriptions used by the background duty scheduler. Unknown scenarios
+ * fail closed, and all coordinates come from backend-advertised geometry. */
+export function simulationRoute(zones, scenario) {
+  if (scenario === "zone-shuttle") {
+    const a = zoneCenter(zones, "SAFE_ZONE_A");
+    const b = zoneCenter(zones, "SAFE_ZONE_B");
+    return a && b
+      ? [
+          {id: "SAFE_ZONE_A", label: "Zone A", ...a},
+          {id: "SAFE_ZONE_B", label: "Zone B", ...b},
+        ]
+      : null;
+  }
+  if (scenario === "zone-a-perimeter") {
+    return zonePerimeter(zones, "SAFE_ZONE_A");
+  }
+  return null;
+}
+
 export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 /** Stick deflection -> commanded speed. Deterministic policy caps at max_speed. */

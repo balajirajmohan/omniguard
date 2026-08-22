@@ -315,6 +315,34 @@ describe("zones and speed (display only — backend is authoritative)", () => {
     expect(OG.zoneCenter(zones, "MISSING")).toBeNull();
   });
 
+  it("derives a clockwise Zone A patrol with clearance from every boundary", () => {
+    const route = OG.zonePerimeter(zones, "SAFE_ZONE_A");
+    expect(route).toEqual([
+      {id: "south-west", label: "south-west corner", x: -3.25, y: -3.25},
+      {id: "south-east", label: "south-east corner", x: 3.25, y: -3.25},
+      {id: "north-east", label: "north-east corner", x: 3.25, y: 1.25},
+      {id: "north-west", label: "north-west corner", x: -3.25, y: 1.25},
+    ]);
+    expect(
+      route.every(
+        (point) => OG.zoneAt(point.x, point.y, zones) === "SAFE_ZONE_A",
+      ),
+    ).toBe(true);
+  });
+
+  it("fails closed for unusable patrol geometry and unknown scenarios", () => {
+    expect(
+      OG.zonePerimeter(
+        {TINY: {x_min: 0, x_max: 1, y_min: 0, y_max: 1}},
+        "TINY",
+      ),
+    ).toBeNull();
+    expect(OG.zonePerimeter(zones, "MISSING")).toBeNull();
+    expect(OG.simulationRoute(zones, "zone-shuttle")).toHaveLength(2);
+    expect(OG.simulationRoute(zones, "zone-a-perimeter")).toHaveLength(4);
+    expect(OG.simulationRoute(zones, "unknown")).toBeNull();
+  });
+
   it("maps deflection within the governor and lets a rogue client exceed it", () => {
     expect(OG.speedFor(0.05, {maxSpeed: 1.5})).toBe(0);
     expect(OG.speedFor(1, {maxSpeed: 1.5})).toBeLessThanOrEqual(1.5);
