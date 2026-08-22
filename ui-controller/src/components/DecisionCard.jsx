@@ -10,19 +10,36 @@ const VERDICT = {
 };
 
 const SOURCE_LABEL = {
-  HARD_POLICY:      'HARD POLICY',
-  ACTION_WINDOW_AI: 'ACTION-WINDOW AI',
-  AI_WARNING:       'AI WARNING',
-  FALLBACK:         'FALLBACK',
-  NO_BLOCK:         'NO BLOCK',
+  hard_policy:            'HARD POLICY',
+  action_window_ai:       'ACTION-WINDOW AI',
+  behavioral_rule:        'BEHAVIORAL RULE',
+  hybrid_rule_ml:         'HYBRID RULE ML',
+  ai_warning:             'AI WARNING',
+  deterministic_fallback: 'DETERMINISTIC FALLBACK',
+  none:                   'NONE',
+  // Upper case fallbacks
+  HARD_POLICY:            'HARD POLICY',
+  ACTION_WINDOW_AI:       'ACTION-WINDOW AI',
+  BEHAVIORAL_RULE:        'BEHAVIORAL RULE',
+  HYBRID_RULE_ML:         'HYBRID RULE ML',
+  AI_WARNING:             'AI WARNING',
+  FALLBACK:               'FALLBACK',
+  NO_BLOCK:               'NO BLOCK',
 };
 
 const SOURCE_CLS = {
-  HARD_POLICY:      'border-bad/55 bg-bad/10 text-bad',
-  ACTION_WINDOW_AI: 'border-info/55 bg-info/10 text-info',
-  AI_WARNING:       'border-warn/55 bg-warn/10 text-warn',
-  FALLBACK:         'border-faint/55 bg-faint/10 text-faint',
-  NO_BLOCK:         'border-ok/55 bg-ok/10 text-ok',
+  hard_policy:            'border-bad/55 bg-bad/10 text-bad',
+  action_window_ai:       'border-info/55 bg-info/10 text-info',
+  behavioral_rule:        'border-warn/55 bg-warn/10 text-warn',
+  hybrid_rule_ml:         'border-violet/55 bg-violet/10 text-violet',
+  ai_warning:             'border-warn/55 bg-warn/10 text-warn',
+  deterministic_fallback: 'border-faint/55 bg-faint/10 text-faint',
+  none:                   'border-ok/55 bg-ok/10 text-ok',
+  HARD_POLICY:            'border-bad/55 bg-bad/10 text-bad',
+  ACTION_WINDOW_AI:       'border-info/55 bg-info/10 text-info',
+  AI_WARNING:             'border-warn/55 bg-warn/10 text-warn',
+  FALLBACK:               'border-faint/55 bg-faint/10 text-faint',
+  NO_BLOCK:               'border-ok/55 bg-ok/10 text-ok',
 };
 
 /** Stacked evidence row for the strongest AI scenario. */
@@ -51,8 +68,11 @@ export default function DecisionCard({ event, timeline }) {
   const { Icon } = v;
   /* hard_policy_would_block === false on a BLOCK is the whole thesis: the rules
    * alone would have allowed it and only the model caught it. */
-  const aiOnly = event.hard_policy_would_block === false && event.final_decision !== 'ALLOW';
+  const aiOnly = (event.hard_policy_would_block === false || event.ai_evidence?.hard_policy_would_block === false) && event.final_decision !== 'ALLOW';
   const decisionSrc = classifyDecisionSource(event);
+
+  const stopConfirmed = event.stop_confirmed === true;
+  const stopRequested = event.stop_requested === true;
 
   return (
     <section className="card pane flex flex-col p-3.5" aria-label="Latest decision">
@@ -63,8 +83,8 @@ export default function DecisionCard({ event, timeline }) {
           {decisionSrc && (
             <span className={`flex items-center gap-1 rounded-full border px-2 py-0.5
                               text-[9px] font-bold tracking-[.08em]
-                              ${SOURCE_CLS[decisionSrc] ?? ''}`}>
-              {SOURCE_LABEL[decisionSrc] ?? decisionSrc}
+                              ${SOURCE_CLS[decisionSrc] ?? 'border-faint/55 text-faint'}`}>
+              {SOURCE_LABEL[decisionSrc] ?? decisionSrc.toUpperCase()}
             </span>
           )}
           <span className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5
@@ -74,9 +94,17 @@ export default function DecisionCard({ event, timeline }) {
         </div>
       </div>
 
+      {/* Physical Stop Truth Status */}
+      {stopRequested && (
+        <div className={`mb-2 flex items-center justify-between rounded-xl border px-3 py-1.5 font-mono text-[10px] ${stopConfirmed ? 'border-bad/45 bg-bad/10 text-bad' : 'border-warn/45 bg-warn/10 text-warn'}`}>
+          <span>Physical Stop: {stopConfirmed ? 'CONFIRMED (ROBOT STOPPED)' : `STAGE (${event.stop_stage ?? 'REQUESTED'})`}</span>
+          {event.stop_ack && <span className="text-[9px] text-faint">ack: {event.stop_ack}</span>}
+        </div>
+      )}
+
       {/* Stacked evidence summary for decision-source visualization */}
       {(event.credential_status || event.device_status || event.zone_status ||
-        event.hard_policy_would_block != null || event.anomaly_risk_score != null) && (
+        event.hard_policy_would_block != null || event.anomaly_risk_score != null || event.ai_evidence) && (
         <div className="mb-2 space-y-0.5 rounded-xl border border-line bg-sunken/70 px-3 py-2">
           {event.credential_status && (
             <EvidenceRow label="Credential" value={event.credential_status}
@@ -90,16 +118,26 @@ export default function DecisionCard({ event, timeline }) {
             <EvidenceRow label="Zone" value={event.zone_status}
               tone={event.zone_status === 'ALLOWED' ? 'text-ok' : 'text-bad'} />
           )}
-          {event.hard_policy_would_block != null && (
+          {(event.hard_policy_would_block != null || event.ai_evidence?.hard_policy_would_block != null) && (
             <EvidenceRow label="Hard rules"
-              value={event.hard_policy_would_block ? 'FAIL' : 'PASS'}
-              tone={event.hard_policy_would_block ? 'text-bad' : 'text-ok'} />
+              value={(event.hard_policy_would_block ?? event.ai_evidence?.hard_policy_would_block) ? 'FAIL' : 'PASS'}
+              tone={(event.hard_policy_would_block ?? event.ai_evidence?.hard_policy_would_block) ? 'text-bad' : 'text-ok'} />
           )}
-          {event.anomaly_risk_score != null && (
-            <EvidenceRow label="Action-window risk"
-              value={event.anomaly_risk_score.toFixed(2)}
-              tone={event.anomaly_risk_score >= 0.8 ? 'text-bad'
-                    : event.anomaly_risk_score >= 0.6 ? 'text-warn' : 'text-ok'} />
+          {(event.anomaly_risk_score != null || event.ai_evidence?.anomaly_risk_score != null) && (
+            <EvidenceRow label="Anomaly risk (iForest)"
+              value={(event.anomaly_risk_score ?? event.ai_evidence?.anomaly_risk_score).toFixed(2)}
+              tone={(event.anomaly_risk_score ?? event.ai_evidence?.anomaly_risk_score) >= 0.8 ? 'text-bad'
+                    : (event.anomaly_risk_score ?? event.ai_evidence?.anomaly_risk_score) >= 0.6 ? 'text-warn' : 'text-ok'} />
+          )}
+          {(event.behavioral_rule_score != null || event.ai_evidence?.behavioral_rule_score != null) && (
+            <EvidenceRow label="Behavioral rule score"
+              value={(event.behavioral_rule_score ?? event.ai_evidence?.behavioral_rule_score).toFixed(2)}
+              tone="text-dim" />
+          )}
+          {(event.effective_risk != null || event.ai_evidence?.effective_risk != null) && (
+            <EvidenceRow label="Effective risk"
+              value={(event.effective_risk ?? event.ai_evidence?.effective_risk).toFixed(2)}
+              tone="text-info" />
           )}
           {event.caught_by && (
             <EvidenceRow label="Caught by"
@@ -124,13 +162,13 @@ export default function DecisionCard({ event, timeline }) {
         ))}
       </div>
 
-      <RiskMeter risk={event.anomaly_risk_score} modelVersion={event.anomaly_model_version}
-        unavailable={event.ai_unavailable} />
+      <RiskMeter risk={event.anomaly_risk_score ?? event.ai_evidence?.anomaly_risk_score} modelVersion={event.anomaly_model_version ?? event.ai_evidence?.model_version}
+        unavailable={event.ai_unavailable || event.ai_evidence?.model_degraded} />
 
       <div className="mt-2.5">
         <span className="label mb-1">Server-derived behaviour</span>
         <dl className="grid grid-cols-2 gap-1 font-mono text-[9.5px]">
-          {Object.entries(event.anomaly_features ?? {}).map(([k, val]) => (
+          {Object.entries(event.anomaly_features ?? event.ai_evidence?.anomaly_features ?? {}).map(([k, val]) => (
             <div key={k} className="flex items-baseline justify-between gap-1 rounded-md
                                     border border-line bg-sunken/70 px-1.5 py-0.5">
               <dt className="truncate text-faint">{FEATURE_LABELS[k] ?? k}</dt>
@@ -163,7 +201,7 @@ export default function DecisionCard({ event, timeline }) {
       )}
 
       {/* Embedded AI Intelligence panel for events with AI decision intelligence */}
-      {(event.decision_source || event.hard_policy_would_block != null) && (
+      {(event.decision_source || event.hard_policy_would_block != null || event.ai_evidence) && (
         <div className="mt-2.5">
           <AiIntelligencePanel event={event} />
         </div>

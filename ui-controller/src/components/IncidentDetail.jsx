@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   AlertTriangle, Bot, Brain, ChevronDown, Clock, FileJson, GitBranch,
-  Layers, MessageSquare, RefreshCw, Shield, ShieldAlert, ShieldCheck,
+  Info, Layers, Loader2, MessageSquare, Play, RefreshCw, Shield, ShieldAlert, ShieldCheck,
   Terminal, Zap,
 } from 'lucide-react';
 import RiskMeter from './RiskMeter.jsx';
@@ -9,7 +9,7 @@ import AgentTrace from './AgentTrace.jsx';
 import IncidentExplanation from './IncidentExplanation.jsx';
 import RecoveryPanel from './RecoveryPanel.jsx';
 import IncidentFeedback from './IncidentFeedback.jsx';
-import { FEATURE_LABELS, normalizeDecisionIntelligence, riskBand } from '../lib/omniguard.js';
+import { FEATURE_LABELS, investigateIncident, normalizeDecisionIntelligence, riskBand } from '../lib/omniguard.js';
 import { exportJson } from '../lib/useSessionLog.js';
 
 const when = (iso) => {
@@ -53,7 +53,12 @@ function KV({ label, value, title }) {
  * Renders each section as a collapsible card using backend-supplied data.
  * Never infers missing data. Timestamps are readable with raw ISO in tooltips.
  */
-export default function IncidentDetail({ incident, cfg }) {
+export default function IncidentDetail({ incident, cfg, onRefresh }) {
+  const [investigating, setInvestigating] = useState(false);
+  const [confirmInvestigate, setConfirmInvestigate] = useState(false);
+  const [investigateError, setInvestigateError] = useState(null);
+  const [llmLimitWarning, setLlmLimitWarning] = useState(false);
+
   if (!incident) {
     return (
       <div className="flex flex-1 items-center justify-center p-8">
@@ -65,6 +70,27 @@ export default function IncidentDetail({ incident, cfg }) {
   const d = normalizeDecisionIntelligence(incident.raw);
   const risk = incident.anomaly_risk_score;
   const eventCount = incident.event_count;
+
+  const handleInvestigate = async () => {
+    setInvestigating(true);
+    setInvestigateError(null);
+    setLlmLimitWarning(false);
+    setConfirmInvestigate(false);
+    try {
+      await investigateIncident(cfg, incident.incident_id);
+      onRefresh?.();
+    } catch (err) {
+      if (err.status === 429 || err.message?.includes('LLM_CALL_LIMIT') || err.body?.detail === 'LLM_CALL_LIMIT') {
+        setLlmLimitWarning(true);
+      } else {
+        setInvestigateError(err.message);
+      }
+    } finally {
+      setInvestigating(false);
+    }
+  };
+
+  const containmentObj = incident.containment;
 
   return (
     <div className="pane space-y-2">
@@ -80,13 +106,54 @@ export default function IncidentDetail({ incident, cfg }) {
             {incident.last_seen && ` → ${when(incident.last_seen)}`}
           </p>
         </div>
-        <button className="btn btn-sm"
-          onClick={() => exportJson(`incident-${incident.incident_id}`, incident.raw)}
-          aria-label="Export incident as JSON">
-          <FileJson size={11} aria-hidden="true" />
-          Export
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            className="btn btn-sm text-violet border-violet/45 hover:bg-violet/10"
+            onClick={() => setConfirmInvestigate(true)}
+            disabled={investigating}
+            aria-label="Investigate incident with AI agent"
+          >
+            {investigating ? <Loader2 size={11} className="animate-spin" aria-hidden="true" /> : <Bot size={11} aria-hidden="true" />}
+            {investigating ? 'Investigating…' : 'Investigate'}
+          </button>
+          <button className="btn btn-sm"
+            onClick={() => exportJson(`incident-${incident.incident_id}`, incident.raw)}
+            aria-label="Export incident as JSON">
+            <FileJson size={11} aria-hidden="true" />
+            Export
+          </button>
+        </div>
       </div>
+
+      {/* Investigate Confirmation Modal / Notice */}
+      {confirmInvestigate && (
+        <div className="flex items-center gap-2 rounded-xl border border-violet/45 bg-violet/10 px-3 py-2">
+          <Bot size={14} className="shrink-0 text-violet" aria-hidden="true" />
+          <p className="flex-1 text-[11px] text-violet">
+            Trigger AI agent investigation for {incident.incident_id}?
+          </p>
+          <div className="flex gap-1.5">
+            <button onClick={() => setConfirmInvestigate(false)} className="btn btn-sm text-faint">Cancel</button>
+            <button onClick={handleInvestigate} className="btn btn-sm btn-primary">Confirm</button>
+          </div>
+        </div>
+      )}
+
+      {/* LLM_CALL_LIMIT Warning */}
+      {llmLimitWarning && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-warn/45 bg-warn/10 px-3 py-2" role="alert">
+          <Info size={14} className="mt-0.5 shrink-0 text-warn" aria-hidden="true" />
+          <p className="text-[11px] leading-relaxed text-warn">
+            <b>LLM call limit reached for this session.</b> Deterministic fallback retained.
+          </p>
+        </div>
+      )}
+
+      {investigateError && (
+        <p className="rounded-lg border border-bad/45 bg-bad/10 px-2 py-1 font-mono text-[10px] text-bad">
+          Investigation error: {investigateError}
+        </p>
+      )}
 
       {/* Event correlation display (Phase 9) */}
       {eventCount != null && eventCount > 1 && (
@@ -104,12 +171,12 @@ export default function IncidentDetail({ incident, cfg }) {
                 <span>Common reason: {incident.common_reason}</span>
               )}
             </div>
-            {incident.affected_robots.length > 0 && (
+            {incident.affected_robots?.length > 0 && (
               <p className="mt-0.5 font-mono text-[9.5px] text-faint">
                 Robots: {incident.affected_robots.join(', ')}
               </p>
             )}
-            {incident.affected_identities.length > 0 && (
+            {incident.affected_identities?.length > 0 && (
               <p className="mt-0.5 font-mono text-[9.5px] text-faint">
                 Identities: {incident.affected_identities.join(', ')}
               </p>
@@ -174,63 +241,100 @@ export default function IncidentDetail({ incident, cfg }) {
         </Section>
       )}
 
-      {/* Section 6: AI model evidence */}
-      {(d || incident.ai_model_evidence) && (
+      {/* Section 6: AI model evidence — Shows all 3 risk metrics separately */}
+      {(d || incident.ai_evidence) && (
         <Section icon={Brain} iconCls="text-info" title="AI model evidence" defaultOpen={!!risk}>
-          {risk != null && (
-            <RiskMeter risk={risk} modelVersion={d?.anomaly_model_version}
-              unavailable={d?.model_degraded} />
-          )}
-          {d?.anomaly_features && (
-            <dl className="mt-2 grid grid-cols-2 gap-1 font-mono text-[9.5px]">
-              {Object.entries(d.anomaly_features).map(([k, val]) => (
-                <KV key={k} label={FEATURE_LABELS[k] ?? k} value={Number(val)} />
-              ))}
-            </dl>
-          )}
-          {d?.model_confidence != null && (
-            <p className="mt-1 font-mono text-[10px] text-faint">
-              Model confidence: {(d.model_confidence * 100).toFixed(1)}%
-            </p>
-          )}
-          {incident.ai_model_evidence && typeof incident.ai_model_evidence === 'object' &&
-            !d?.anomaly_features && (
-            <pre className="mt-1 overflow-x-auto rounded-lg border border-line bg-sunken/70
-                            px-2 py-1 font-mono text-[9.5px] text-dim whitespace-pre-wrap">
-              {JSON.stringify(incident.ai_model_evidence, null, 2)}
-            </pre>
-          )}
+          <div className="space-y-2">
+            {/* Three distinct risk scores */}
+            <div className="grid grid-cols-3 gap-1.5 font-mono text-[9.5px]">
+              <div className="rounded-lg border border-line bg-sunken/70 px-2 py-1 text-center">
+                <span className="block text-faint text-[8.5px]">Anomaly Risk (iForest)</span>
+                <span className="font-bold text-dim">{d?.anomaly_risk_score != null ? d.anomaly_risk_score.toFixed(2) : '—'}</span>
+              </div>
+              <div className="rounded-lg border border-line bg-sunken/70 px-2 py-1 text-center">
+                <span className="block text-faint text-[8.5px]">Behavioral Rule Score</span>
+                <span className="font-bold text-dim">{d?.behavioral_rule_score != null ? d.behavioral_rule_score.toFixed(2) : '—'}</span>
+              </div>
+              <div className="rounded-lg border border-line bg-sunken/70 px-2 py-1 text-center">
+                <span className="block text-faint text-[8.5px]">Effective Risk</span>
+                <span className="font-bold text-info">{d?.effective_risk != null ? d.effective_risk.toFixed(2) : '—'}</span>
+              </div>
+            </div>
+
+            {risk != null && (
+              <RiskMeter risk={risk} modelVersion={d?.anomaly_model_version} unavailable={d?.model_degraded} />
+            )}
+
+            {d?.anomaly_features && (
+              <dl className="mt-2 grid grid-cols-2 gap-1 font-mono text-[9.5px]">
+                {Object.entries(d.anomaly_features).map(([k, val]) => (
+                  <KV key={k} label={FEATURE_LABELS[k] ?? k} value={Number(val)} />
+                ))}
+              </dl>
+            )}
+
+            {d?.model_confidence != null && (
+              <p className="mt-1 font-mono text-[10px] text-faint">
+                Model confidence: {(d.model_confidence * 100).toFixed(1)}%
+              </p>
+            )}
+          </div>
         </Section>
       )}
 
       {/* Section 7: Hard-policy evidence */}
-      {incident.hard_policy_evidence && (
+      {(incident.hard_policy || incident.hard_policy_evidence) && (
         <Section icon={ShieldAlert} iconCls="text-bad" title="Hard-policy evidence">
           <pre className="overflow-x-auto rounded-lg border border-line bg-sunken/70
                           px-2.5 py-1.5 font-mono text-[9.5px] text-dim whitespace-pre-wrap">
-            {typeof incident.hard_policy_evidence === 'string'
-              ? incident.hard_policy_evidence
-              : JSON.stringify(incident.hard_policy_evidence, null, 2)}
+            {typeof (incident.hard_policy ?? incident.hard_policy_evidence) === 'string'
+              ? (incident.hard_policy ?? incident.hard_policy_evidence)
+              : JSON.stringify(incident.hard_policy ?? incident.hard_policy_evidence, null, 2)}
           </pre>
         </Section>
       )}
 
       {/* Section 8: Containment actions */}
-      {incident.containment_actions.length > 0 && (
-        <Section icon={AlertTriangle} iconCls="text-warn" title="Containment actions">
-          <ol className="space-y-0.5">
-            {incident.containment_actions.map((a, i) => (
-              <li key={i} className="font-mono text-[10px] text-dim">
-                {typeof a === 'string' ? a : JSON.stringify(a)}
-              </li>
-            ))}
-          </ol>
+      {containmentObj && (
+        <Section icon={AlertTriangle} iconCls="text-warn" title="Containment actions" defaultOpen>
+          <div className="space-y-1.5 font-mono text-[10px]">
+            {containmentObj.status && (
+              <div className="flex items-center justify-between rounded-md border border-line bg-sunken/70 px-2 py-1">
+                <span className="text-faint">Containment Status:</span>
+                <span className="font-bold text-warn">{containmentObj.status}</span>
+              </div>
+            )}
+            {containmentObj.attempted && (
+              <div>
+                <span className="label mb-0.5">Attempted</span>
+                <p className="text-dim">{Array.isArray(containmentObj.attempted) ? containmentObj.attempted.join(', ') : String(containmentObj.attempted)}</p>
+              </div>
+            )}
+            {containmentObj.acknowledged && (
+              <div>
+                <span className="label mb-0.5">Acknowledged</span>
+                <p className="text-ok">{Array.isArray(containmentObj.acknowledged) ? containmentObj.acknowledged.join(', ') : String(containmentObj.acknowledged)}</p>
+              </div>
+            )}
+            {containmentObj.failed && (
+              <div>
+                <span className="label mb-0.5 text-bad">Failed</span>
+                <p className="text-bad">{Array.isArray(containmentObj.failed) ? containmentObj.failed.join(', ') : String(containmentObj.failed)}</p>
+              </div>
+            )}
+            {containmentObj.unverified && (
+              <div>
+                <span className="label mb-0.5 text-warn">Unverified</span>
+                <p className="text-warn">{Array.isArray(containmentObj.unverified) ? containmentObj.unverified.join(', ') : String(containmentObj.unverified)}</p>
+              </div>
+            )}
+          </div>
         </Section>
       )}
 
-      {/* Section 9: Isaac acknowledgements */}
+      {/* Section 9: Isaac / Bridge acknowledgements */}
       {incident.isaac_acks.length > 0 && (
-        <Section icon={Clock} title="Isaac acknowledgements">
+        <Section icon={Clock} title="Isaac bridge acknowledgements">
           <ol className="space-y-0.5">
             {incident.isaac_acks.map((a, i) => (
               <li key={i} className="font-mono text-[10px] text-dim">
@@ -243,28 +347,28 @@ export default function IncidentDetail({ incident, cfg }) {
 
       {/* Section 10: Agent investigation */}
       {incident.agent_trace && (
-        <Section icon={Bot} iconCls="text-violet" title="Agent investigation">
+        <Section icon={Bot} iconCls="text-violet" title="Agent investigation" defaultOpen>
           <AgentTrace raw={incident.agent_trace} />
         </Section>
       )}
 
       {/* Section 11: LLM explanation and provenance */}
-      {incident.explanation && (
-        <Section icon={Brain} iconCls="text-info" title="LLM explanation and provenance">
-          <IncidentExplanation raw={incident.explanation} />
+      {incident.llm_explanation && (
+        <Section icon={Brain} iconCls="text-info" title="LLM explanation and provenance" defaultOpen>
+          <IncidentExplanation raw={incident.llm_explanation} />
         </Section>
       )}
 
       {/* Section 12: Feedback */}
       <Section icon={MessageSquare} title="Feedback">
         <IncidentFeedback incidentId={incident.incident_id}
-          existingFeedback={incident.feedback} cfg={cfg} />
+          existingFeedback={incident.human_feedback} cfg={cfg} />
       </Section>
 
       {/* Section 13: Recovery */}
-      <Section icon={RefreshCw} title="Recovery">
+      <Section icon={RefreshCw} title="Recovery" defaultOpen>
         <RecoveryPanel incidentId={incident.incident_id}
-          raw={incident.recovery} cfg={cfg} />
+          raw={incident.recovery} cfg={cfg} onRefresh={onRefresh} />
       </Section>
 
       {/* Raw events (expandable for Phase 9 event correlation) */}
@@ -281,3 +385,4 @@ export default function IncidentDetail({ incident, cfg }) {
     </div>
   );
 }
+

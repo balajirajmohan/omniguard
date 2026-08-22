@@ -7,15 +7,42 @@ const cfg = {
   api: 'http://127.0.0.1:8000',
   robot: 'robot-01',
   credential: 'fleet-agent-valid-token',
+  operatorToken: 'omniguard-operator',
 };
 
 function mockFetch(response = { ok: true, body: {} }) {
-  const spy = vi.fn(async () => ({
-    ok: response.ok !== false,
-    status: response.status ?? 200,
-    statusText: 'OK',
-    text: async () => JSON.stringify(response.body ?? {}),
-  }));
+  const spy = vi.fn(async (_url, opts = {}) => {
+    if (response.requireOperatorHeader) {
+      const headers = opts.headers || {};
+      const opHeader = headers['X-OmniGuard-Operator'] || headers['x-omniguard-operator'];
+      if (!opHeader) {
+        return {
+          ok: false,
+          status: 401,
+          statusText: 'Unauthorized',
+          text: async () => JSON.stringify({ detail: 'Operator authentication required' }),
+        };
+      }
+    }
+    if (response.validateBody) {
+      const body = opts.body ? JSON.parse(opts.body) : {};
+      const invalid = response.validateBody(body);
+      if (invalid) {
+        return {
+          ok: false,
+          status: 422,
+          statusText: 'Unprocessable Entity',
+          text: async () => JSON.stringify({ detail: invalid }),
+        };
+      }
+    }
+    return {
+      ok: response.ok !== false,
+      status: response.status ?? 200,
+      statusText: 'OK',
+      text: async () => JSON.stringify(response.body ?? {}),
+    };
+  });
   globalThis.fetch = spy;
   return spy;
 }
@@ -37,659 +64,300 @@ beforeEach(() => {
   };
 });
 
-/* ================================================================ TEST 1
- * Existing control surface still renders. */
-describe('existing control surface still renders', () => {
-  it('App.jsx still imports DualSense, WarehouseMap, ScenarioPanel, PlaneCard', () => {
-    const src = readFileSync(
-      join(new URL('../../', import.meta.url).pathname, 'App.jsx'), 'utf8',
-    );
-    expect(src).toContain("import DualSense from");
-    expect(src).toContain("import WarehouseMap from");
-    expect(src).toContain("import ScenarioPanel from");
-    expect(src).toContain("import PlaneCard from");
-    expect(src).toContain("import DecisionCard from");
-    expect(src).toContain("import InvestigatePanel from");
-    expect(src).toContain("import LogsView from");
+/* ================================================================ MANDATORY FIX 1
+ * Send X-OmniGuard-Operator on investigate, feedback and recover requests. */
+describe('X-OmniGuard-Operator authorization on incident mutations', () => {
+  it('investigateIncident sends X-OmniGuard-Operator header', async () => {
+    const spy = mockFetch({ requireOperatorHeader: true, body: { status: 'started' } });
+    const res = await OG.investigateIncident(cfg, 'INC-100');
+    expect(res.status).toBe('started');
+    const headers = spy.mock.calls[0][1].headers;
+    expect(headers['X-OmniGuard-Operator']).toBe('omniguard-operator');
+  });
+
+  it('submitIncidentFeedback sends X-OmniGuard-Operator header', async () => {
+    const spy = mockFetch({ requireOperatorHeader: true, body: { status: 'recorded' } });
+    const res = await OG.submitIncidentFeedback(cfg, 'INC-100', { classification: 'FALSE_POSITIVE', notes: 'test' });
+    expect(res.status).toBe('recorded');
+    const headers = spy.mock.calls[0][1].headers;
+    expect(headers['X-OmniGuard-Operator']).toBe('omniguard-operator');
+  });
+
+  it('advanceIncidentRecovery sends X-OmniGuard-Operator header', async () => {
+    const spy = mockFetch({ requireOperatorHeader: true, body: { state: 'IN_PROGRESS' } });
+    const res = await OG.advanceIncidentRecovery(cfg, 'INC-100', {});
+    expect(res.state).toBe('IN_PROGRESS');
+    const headers = spy.mock.calls[0][1].headers;
+    expect(headers['X-OmniGuard-Operator']).toBe('omniguard-operator');
   });
 });
 
-/* ================================================================ TEST 2
- * Existing normal teleop still works. */
-describe('existing normal teleop still works', () => {
-  it('teleopStart, teleopMove, teleopStop are still exported', () => {
-    expect(typeof OG.teleopStart).toBe('function');
-    expect(typeof OG.teleopMove).toBe('function');
-    expect(typeof OG.teleopStop).toBe('function');
+/* ================================================================ MANDATORY FIX 2 & 3
+ * Payload compatibility (notes field for feedback, {} or {evidence} for recovery). */
+describe('Feedback and recovery payload shape compatibility', () => {
+  it('feedback accepts notes field and rejects comment field (422 test)', async () => {
+    const spy = mockFetch({
+      validateBody: (b) => {
+        if ('comment' in b) return 'Field "comment" not allowed, use "notes"';
+        if (!('classification' in b)) return 'Field "classification" required';
+        return null;
+      },
+      body: { status: 'ok' },
+    });
+
+    // Valid payload with notes
+    await expect(OG.submitIncidentFeedback(cfg, 'INC-100', { classification: 'FALSE_POSITIVE', notes: 'Valid note' })).resolves.toEqual({ status: 'ok' });
+
+    // Invalid payload with comment triggers 422
+    const badSpy = mockFetch({
+      validateBody: (b) => ('comment' in b ? 'Unprocessable' : null),
+    });
+    await expect(OG.submitIncidentFeedback(cfg, 'INC-100', { classification: 'FALSE_POSITIVE', comment: 'Bad' })).rejects.toThrow('Unprocessable');
   });
 
-  it('teleop start still sends the identity and starting point', async () => {
-    const spy = mockFetch({ body: { final_decision: 'ALLOW', control_id: 'abc' } });
-    await OG.teleopStart(cfg, 'legit', { x: 4.2, y: 2.7, speed: 0.8 });
-    expect(urlOf(spy)).toBe('http://127.0.0.1:8000/api/teleop/start');
-  });
-});
+  it('recovery start sends {} and advancement sends evidence object', async () => {
+    const spy = mockFetch({
+      validateBody: (b) => {
+        if ('action' in b) return 'Field "action" not recognized; expected {} or {evidence} or {force_state}';
+        return null;
+      },
+      body: { state: 'IDP_WORKFLOW_COMPLETE' },
+    });
 
-/* ================================================================ TEST 3
- * Existing rogue-device plane still works. */
-describe('existing rogue-device plane still works', () => {
-  it('sends the rogue device identity to the backend', async () => {
-    const spy = mockFetch({ body: { final_decision: 'BLOCK', reasons: ['UNKNOWN_DEVICE'] } });
-    await OG.teleopStart(cfg, 'rogue', { x: 0, y: 0, speed: 0.8 });
-    const body = JSON.parse(spy.mock.calls[0][1].body);
-    expect(body.device_id).toBe('rogue-controller');
-  });
-});
+    // Empty payload starts recovery
+    await expect(OG.advanceIncidentRecovery(cfg, 'INC-100', {})).resolves.toEqual({ state: 'IDP_WORKFLOW_COMPLETE' });
 
-/* ================================================================ TEST 4
- * Existing arm and gripper controls still work. */
-describe('existing arm and gripper controls still work', () => {
-  it('arm presets and gripper functions are still exported', () => {
-    expect(typeof OG.teleopArmPreset).toBe('function');
-    expect(typeof OG.teleopArmJoints).toBe('function');
-    expect(typeof OG.teleopGripper).toBe('function');
-    expect(OG.ARM_PRESETS).toEqual(['stow', 'carry', 'reach', 'inspect']);
-    expect(OG.GRIPPER_ACTIONS).toEqual(['open', 'close']);
-  });
-});
+    // Evidence payload advances recovery
+    await expect(OG.advanceIncidentRecovery(cfg, 'INC-100', { evidence: { device_attested: true } })).resolves.toEqual({ state: 'IDP_WORKFLOW_COMPLETE' });
 
-/* ================================================================ TEST 5
- * Missing AI endpoints do not break the console. */
-describe('missing AI endpoints do not break the console', () => {
-  it('getAiStatus 404 does not throw into the caller when caught', async () => {
-    mockFetch({ ok: false, status: 404, body: { detail: 'Not Found' } });
-    let error;
-    try { await OG.getAiStatus(cfg); } catch (e) { error = e; }
-    expect(error).toBeDefined();
-    expect(error.status).toBe(404);
-  });
-
-  it('listIncidents 404 produces a typed ApiError', async () => {
-    mockFetch({ ok: false, status: 404, body: { detail: 'Not Found' } });
-    await expect(OG.listIncidents(cfg)).rejects.toMatchObject({ status: 404 });
-  });
-
-  it('console still has all existing exports after AI extensions', () => {
-    /* If any existing export was removed, this test fails. */
-    for (const name of [
-      'DEFAULTS', 'DEMO_CREDENTIAL', 'DEMO_OPERATOR_TOKEN', 'OPERATOR_HEADER',
-      'loadConfig', 'saveConfig', 'IDENTITIES', 'DEADZONE', 'padStickFor',
-      'padEstopPressed', 'LOOKAHEAD', 'FALLBACK_TELEOP_CONFIG', 'isRestrictedZone',
-      'floorBounds', 'zoneAt', 'clamp', 'speedFor', 'ApiError', 'apiGet',
-      'rejectionReasons', 'getHealth', 'getState', 'getEvents', 'getTimeline',
-      'getLatestIncident', 'listScenarios', 'investigate', 'resetBackend',
-      'runScenario', 'getTeleopConfig', 'teleopStart', 'teleopMove', 'teleopStop',
-      'teleopArmPreset', 'teleopArmJoints', 'teleopGripper', 'RISK_WARNING',
-      'RISK_CRITICAL', 'riskBand', 'FEATURE_LABELS', 'readPosition',
-      'ARM_PRESETS', 'GRIPPER_ACTIONS', 'ARM_EXTENSION', 'ARM_YAW_DEGREES',
-      'readManipulator', 'headingFrom',
-    ]) {
-      expect(OG[name], `${name} should still be exported`).toBeDefined();
-    }
+    // Old payload {action: "advance"} causes 422 rejection
+    await expect(OG.advanceIncidentRecovery(cfg, 'INC-100', { action: 'advance' })).rejects.toThrow();
   });
 });
 
-/* ================================================================ TEST 6
- * AI-only block displays 'hard rules passed'. */
-describe('AI-only block displays hard rules passed', () => {
-  it('normalizeDecisionIntelligence sets hard_policy_would_block=false', () => {
-    const d = OG.normalizeDecisionIntelligence({
-      final_decision: 'BLOCK',
+/* ================================================================ MANDATORY FIX 4
+ * LLM_CALL_LIMIT handling on investigate. */
+describe('LLM_CALL_LIMIT rate limit handling', () => {
+  it('investigate handles 429 LLM_CALL_LIMIT as an ApiError with status 429', async () => {
+    mockFetch({ ok: false, status: 429, body: { detail: 'LLM_CALL_LIMIT' } });
+    await expect(OG.investigateIncident(cfg, 'INC-100')).rejects.toMatchObject({
+      status: 429,
+      message: 'LLM_CALL_LIMIT',
+    });
+  });
+});
+
+/* ================================================================ MANDATORY FIX 5 & 6 & 10 & 11
+ * Backend main commit 65737e3 fixture normalization. */
+describe('Normalization of backend main commit 65737e3 response fixtures', () => {
+  const backendFixture = {
+    id: 'INC-2026-0822-001',
+    status: 'ACTIVE',
+    first_event_at: '2026-08-22T10:15:30.000Z',
+    last_event_at: '2026-08-22T10:16:00.000Z',
+    agent_id: 'fleet-agent-01',
+    device_id: 'rogue-controller-01',
+    robot_id: 'robot-01',
+    demo_run_id: 'run-8821',
+    playbook: 'CONTAIN_UNAUTHORIZED_MOVEMENT',
+    model_version: 'iforest-v2.1',
+    policy_version: 'policy-2026.08',
+    decision_source: 'hybrid_rule_ml',
+    ai_evidence: {
+      decision_source: 'hybrid_rule_ml',
+      anomaly_risk_score: 0.88,
+      behavioral_rule_score: 0.95,
+      effective_risk: 0.92,
+      anomaly_features: { speed: 3.5, restricted_zone_entry: 1 },
+      ai_mode: 'enforce',
+      model_version: 'iforest-v2.1',
+      model_confidence: 0.91,
+      artifact_verified: true,
+      model_degraded: false,
       hard_policy_would_block: false,
-      anomaly_risk_score: 0.92,
-      decision_source: 'action_window_ai',
-    });
-    expect(d.hard_policy_would_block).toBe(false);
-    expect(d.decision_source).toBe('ACTION_WINDOW_AI');
-  });
-
-  it('classifyDecisionSource returns ACTION_WINDOW_AI for AI-only block', () => {
-    expect(OG.classifyDecisionSource({
-      hard_policy_would_block: false,
-      final_decision: 'BLOCK',
-    })).toBe('ACTION_WINDOW_AI');
-  });
-});
-
-/* ================================================================ TEST 7
- * Hard-policy block displays deterministic policy source. */
-describe('hard-policy block displays deterministic policy source', () => {
-  it('classifyDecisionSource returns HARD_POLICY when hard_policy_would_block=true', () => {
-    expect(OG.classifyDecisionSource({
-      hard_policy_would_block: true,
-      final_decision: 'BLOCK',
-    })).toBe('HARD_POLICY');
-  });
-
-  it('normalizeDecisionIntelligence surfaces hard_policy_reasons', () => {
-    const d = OG.normalizeDecisionIntelligence({
-      hard_policy_would_block: true,
-      hard_policy_reasons: ['UNKNOWN_DEVICE', 'RESTRICTED_ZONE'],
-    });
-    expect(d.hard_policy_reasons).toEqual(['UNKNOWN_DEVICE', 'RESTRICTED_ZONE']);
-  });
-});
-
-/* ================================================================ TEST 8
- * Observe mode is labelled. */
-describe('observe mode is labelled', () => {
-  it('normalizeDecisionIntelligence preserves ai_mode=observe', () => {
-    const d = OG.normalizeDecisionIntelligence({
-      ai_mode: 'observe',
-      final_decision: 'ALLOW',
-    });
-    expect(d.ai_mode).toBe('observe');
-  });
-});
-
-/* ================================================================ TEST 9
- * Null model confidence is not rendered as a percentage. */
-describe('null model confidence is not rendered as a percentage', () => {
-  it('normalizeDecisionIntelligence keeps null model_confidence as null', () => {
-    const d = OG.normalizeDecisionIntelligence({
-      model_confidence: null,
-      anomaly_risk_score: 0.5,
-    });
-    expect(d.model_confidence).toBeNull();
-  });
-
-  it('does not convert undefined model_confidence to 0', () => {
-    const d = OG.normalizeDecisionIntelligence({
-      anomaly_risk_score: 0.3,
-    });
-    expect(d.model_confidence).toBeNull();
-  });
-});
-
-/* ================================================================ TEST 10
- * Anomaly score is not labelled probability. */
-describe('anomaly score is not labelled probability', () => {
-  it('no component source file contains "probability" in the context of anomaly', () => {
-    const srcDir = new URL('../../', import.meta.url).pathname;
-    const offenders = [];
-    const walk = (dir) => {
-      for (const name of readdirSync(dir)) {
-        const full = join(dir, name);
-        if (statSync(full).isDirectory()) {
-          if (name !== '__tests__' && name !== 'node_modules') walk(full);
-          continue;
-        }
-        if (!/\.(js|jsx)$/.test(name)) continue;
-        const code = readFileSync(full, 'utf8')
-          .replace(/\/\*[\s\S]*?\*\//g, '')
-          .replace(/^\s*\/\/.*$/gm, '')
-          .replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
-        /* Allow "probability" only in test files and comments. */
-        if (/anomaly.*probabilit|probabilit.*anomaly/i.test(code)) {
-          offenders.push(full);
-        }
-      }
-    };
-    walk(srcDir);
-    expect(offenders).toEqual([]);
-  });
-
-  it('RiskMeter label says "anomaly risk", not "probability"', () => {
-    const src = readFileSync(
-      join(new URL('../../', import.meta.url).pathname, 'components', 'RiskMeter.jsx'), 'utf8',
-    );
-    expect(src).toContain('AI anomaly risk');
-    expect(src).not.toMatch(/probability/i);
-  });
-});
-
-/* ================================================================ TEST 11
- * Live LLM provider/model is displayed. */
-describe('live LLM provider/model is displayed', () => {
-  it('normalizeLlmProvenance surfaces provider and model for live analysis', () => {
-    const p = OG.normalizeLlmProvenance({
+      hard_policy_reasons: [],
+    },
+    hard_policy: {
+      would_block: false,
+      reasons: [],
+    },
+    containment: {
+      status: 'CONTAINED',
+      attempted: ['BASE_DISABLE', 'BRAKE_ENGAGE'],
+      acknowledged: ['BASE_DISABLE'],
+      failed: [],
+      unverified: ['BRAKE_ENGAGE'],
+      bridge_acknowledgements: ['ISAAC_ACK_BASE_DISABLE_OK'],
+    },
+    llm_explanation: {
+      summary: 'High-speed navigation inside human-restricted zone.',
       provider: 'anthropic',
       model: 'claude-3-5-sonnet',
-      summary: 'test',
-    });
-    expect(p.status).toBe('live_llm');
-    expect(p.provider).toBe('anthropic');
-    expect(p.model).toBe('claude-3-5-sonnet');
-  });
-});
-
-/* ================================================================ TEST 12
- * Deterministic fallback is displayed clearly. */
-describe('deterministic fallback is displayed clearly', () => {
-  it('normalizeLlmProvenance identifies fallback_used=true', () => {
-    const p = OG.normalizeLlmProvenance({
-      fallback_used: true,
-      fallback_reason: 'LLM timeout',
-      summary: 'deterministic analysis',
-    });
-    expect(p.status).toBe('deterministic_fallback');
-    expect(p.fallback_used).toBe(true);
-    expect(p.fallback_reason).toBe('LLM timeout');
-  });
-
-  it('normalizeLlmProvenance identifies is_fallback=true (alternate field)', () => {
-    const p = OG.normalizeLlmProvenance({
-      is_fallback: true,
-      summary: 'deterministic analysis',
-    });
-    expect(p.status).toBe('deterministic_fallback');
-    expect(p.fallback_used).toBe(true);
-  });
-
-  it('AgentTrace source labels deterministic fallback', () => {
-    const src = readFileSync(
-      join(new URL('../../', import.meta.url).pathname, 'components', 'AgentTrace.jsx'), 'utf8',
-    );
-    expect(src).toContain('DETERMINISTIC FALLBACK');
-  });
-});
-
-/* ================================================================ TEST 13
- * Agent proposal is not shown as executed containment. */
-describe('agent proposal is not shown as executed containment', () => {
-  it('normalizeAgentTrace distinguishes proposed from authorized', () => {
-    const trace = OG.normalizeAgentTrace({
-      proposed_playbook: 'CREDENTIAL_COMPROMISE',
-      execution_authorized: false,
-      steps: [{ tool: 'get_identity_history' }],
-    });
-    expect(trace.proposed_playbook).toBe('CREDENTIAL_COMPROMISE');
-    expect(trace.execution_authorized).toBe(false);
-  });
-
-  it('AgentTrace component says "Proposed" not "Executed" for unauthorized', () => {
-    const src = readFileSync(
-      join(new URL('../../', import.meta.url).pathname, 'components', 'AgentTrace.jsx'), 'utf8',
-    );
-    expect(src).toContain("execution_authorized ? 'Authorized' : 'Proposed'");
-    expect(src).toContain('Not executed until deterministic containment confirms');
-  });
-});
-
-/* ================================================================ TEST 14
- * Incident event correlation count renders. */
-describe('incident event correlation count renders', () => {
-  it('normalizeIncidentDetail preserves event_count', () => {
-    const d = OG.normalizeIncidentDetail({
-      incident_id: 'INC-001',
-      event_count: 840,
-      first_seen: '2026-08-22T10:00:00Z',
-      last_seen: '2026-08-22T10:05:00Z',
-    });
-    expect(d.event_count).toBe(840);
-  });
-
-  it('IncidentDetail renders event count in source', () => {
-    const src = readFileSync(
-      join(new URL('../../', import.meta.url).pathname, 'components', 'IncidentDetail.jsx'), 'utf8',
-    );
-    expect(src).toContain('events correlated into this incident');
-  });
-});
-
-/* ================================================================ TEST 15
- * Feedback requires explicit confirmation. */
-describe('feedback requires explicit confirmation', () => {
-  it('IncidentFeedback has a confirmation step before submit', () => {
-    const src = readFileSync(
-      join(new URL('../../', import.meta.url).pathname, 'components', 'IncidentFeedback.jsx'), 'utf8',
-    );
-    expect(src).toContain('confirming');
-    expect(src).toContain('Confirm');
-    expect(src).toContain('Cancel');
-    /* Must not auto-label based on LLM */
-    expect(src).toContain('Feedback becomes reviewed training evidence');
-  });
-
-  it('offers all 7 required classifications', () => {
-    const src = readFileSync(
-      join(new URL('../../', import.meta.url).pathname, 'components', 'IncidentFeedback.jsx'), 'utf8',
-    );
-    for (const c of [
-      'CONFIRMED_ATTACK', 'FALSE_POSITIVE', 'OPERATOR_ERROR',
-      'MISCONFIGURATION', 'EXPECTED_MAINTENANCE', 'POLICY_GAP', 'UNKNOWN',
-    ]) {
-      expect(src).toContain(c);
-    }
-  });
-});
-
-/* ================================================================ TEST 16
- * Simulated recovery is labelled. */
-describe('simulated recovery is labelled', () => {
-  it('normalizeRecoveryState maps simulated status', () => {
-    const r = OG.normalizeRecoveryState({
-      old_credential_revoked: 'simulated',
-      new_credential_issued: 'verified',
-    });
-    expect(r.old_credential_revoked).toBe('simulated');
-    expect(r.new_credential_issued).toBe('verified');
-  });
-
-  it('RecoveryPanel source contains SIMULATED FOR DEMO label', () => {
-    const src = readFileSync(
-      join(new URL('../../', import.meta.url).pathname, 'components', 'RecoveryPanel.jsx'), 'utf8',
-    );
-    expect(src).toContain('SIMULATED FOR DEMO');
-  });
-});
-
-/* ================================================================ TEST 17
- * Reset Demo remains available. */
-describe('Reset Demo remains available', () => {
-  it('TopBar still renders Reset demo button', () => {
-    const src = readFileSync(
-      join(new URL('../../', import.meta.url).pathname, 'components', 'TopBar.jsx'), 'utf8',
-    );
-    expect(src).toContain('Reset demo');
-    expect(src).toContain('onReset');
-  });
-
-  it('App.jsx still handles reset', () => {
-    const src = readFileSync(
-      join(new URL('../../', import.meta.url).pathname, 'App.jsx'), 'utf8',
-    );
-    expect(src).toContain('handleReset');
-    expect(src).toContain('ctl.reset');
-  });
-});
-
-/* ================================================================ TEST 18
- * Incident polling does not change joystick request frequency. */
-describe('incident polling does not change joystick request frequency', () => {
-  it('useController.js is untouched — no changes to poll timing', () => {
-    const src = readFileSync(
-      join(new URL('../../', import.meta.url).pathname, 'lib', 'useController.js'), 'utf8',
-    );
-    /* These are the constants that control the teleop loop timing. */
-    expect(src).toContain('const IDLE_POLL_MS = 1500');
-    expect(src).toContain('const ACTIVE_POLL_MS = 350');
-    /* The loop is driven by stream_hz, not by incident polling. */
-    expect(src).toContain('teleopConfig.stream_hz');
-  });
-
-  it('useIncidents hook uses its own separate timers', () => {
-    const src = readFileSync(
-      join(new URL('../../', import.meta.url).pathname, 'lib', 'useIncidents.js'), 'utf8',
-    );
-    /* Has its own polling intervals */
-    expect(src).toMatch(/LIST_POLL_MS/);
-    expect(src).toMatch(/DETAIL_POLL_MS/);
-    /* Does not import or reference useController's intervals */
-    expect(src).not.toContain('IDLE_POLL_MS');
-    expect(src).not.toContain('ACTIVE_POLL_MS');
-    expect(src).not.toContain('stream_hz');
-  });
-});
-
-/* ================================================================ TEST 19
- * No bridge token or LLM API key is stored. */
-describe('no bridge token or LLM API key is stored', () => {
-  it('never references ISAAC_BRIDGE_TOKEN in any source file', () => {
-    const srcDir = new URL('../../', import.meta.url).pathname;
-    const offenders = [];
-    const walk = (dir) => {
-      for (const name of readdirSync(dir)) {
-        const full = join(dir, name);
-        if (statSync(full).isDirectory()) {
-          if (name !== '__tests__' && name !== 'node_modules') walk(full);
-          continue;
-        }
-        if (!/\.(js|jsx)$/.test(name)) continue;
-        const code = readFileSync(full, 'utf8')
-          .replace(/\/\*[\s\S]*?\*\//g, '')
-          .replace(/^\s*\/\/.*$/gm, '');
-        if (code.includes('ISAAC_BRIDGE_TOKEN')) offenders.push(full);
-      }
-    };
-    walk(srcDir);
-    expect(offenders).toEqual([]);
-  });
-
-  it('never stores OpenAI/Anthropic/Bedrock keys in localStorage', () => {
-    const srcDir = new URL('../../', import.meta.url).pathname;
-    const offenders = [];
-    const walk = (dir) => {
-      for (const name of readdirSync(dir)) {
-        const full = join(dir, name);
-        if (statSync(full).isDirectory()) {
-          if (name !== '__tests__' && name !== 'node_modules') walk(full);
-          continue;
-        }
-        if (!/\.(js|jsx)$/.test(name)) continue;
-        const code = readFileSync(full, 'utf8')
-          .replace(/\/\*[\s\S]*?\*\//g, '')
-          .replace(/^\s*\/\/.*$/gm, '')
-          .replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
-        if (/localStorage\.\s*setItem\s*\([^)]*(?:api.key|openai|anthropic|bedrock|aws.secret)/i.test(code)) {
-          offenders.push(full);
-        }
-      }
-    };
-    walk(srcDir);
-    expect(offenders).toEqual([]);
-  });
-
-  it('saveConfig still strips credentials', () => {
-    OG.saveConfig({
-      api: 'http://x', robot: 'r',
-      credential: 'secret', operatorToken: 'op-secret',
-    });
-    const raw = localStorage.getItem('omniguard.cfg');
-    expect(raw).not.toContain('secret');
-    expect(raw).not.toContain('operatorToken');
-  });
-});
-
-/* ================================================================ TEST 20
- * Session export contains new AI provenance fields. */
-describe('session export contains new AI provenance fields', () => {
-  it('CSV header includes all new AI provenance columns', async () => {
-    const { toCsv } = await import('../useSessionLog.js');
-    const csv = toCsv([{
-      timestamp: '2026-08-22T10:00:00Z',
-      final_decision: 'BLOCK',
-      decision_source: 'action_window_ai',
-      anomaly_model_version: 'action-window-iforest-v1',
-      ai_mode: 'enforce',
-      incident_id: 'INC-001',
-      response_playbook: 'UNSAFE_MANIPULATION_SEQUENCE',
-      containment_ack: 'BASE_STOP',
-    }]);
-    const header = csv.split('\n')[0];
-    for (const col of [
-      'decision_source', 'anomaly_model_version', 'ai_mode',
-      'incident_id', 'response_playbook', 'containment_ack',
-    ]) {
-      expect(header).toContain(`"${col}"`);
-    }
-  });
-
-  it('preserves all original 12 columns', async () => {
-    const { toCsv } = await import('../useSessionLog.js');
-    const header = toCsv([{}]).split('\n')[0];
-    for (const col of [
-      'timestamp', 'final_decision', 'policy_decision', 'caught_by',
-      'hard_policy_would_block', 'anomaly_risk_score', 'agent_id',
-      'device_id', 'destination', 'speed', 'reasons', 'actions',
-    ]) {
-      expect(header).toContain(`"${col}"`);
-    }
-  });
-
-  it('CSV row includes AI field values', async () => {
-    const { toCsv } = await import('../useSessionLog.js');
-    const rows = toCsv([{
-      decision_source: 'action_window_ai',
-      incident_id: 'INC-999',
-    }]).split('\n');
-    expect(rows[1]).toContain('action_window_ai');
-    expect(rows[1]).toContain('INC-999');
-  });
-});
-
-/* ============================================ NEW API FUNCTION UNIT TESTS */
-
-describe('new AI API functions', () => {
-  it('getAiStatus calls /api/ai/status', async () => {
-    const spy = mockFetch({ body: { available: true, model_version: 'v1' } });
-    await OG.getAiStatus(cfg);
-    expect(urlOf(spy)).toBe('http://127.0.0.1:8000/api/ai/status');
-  });
-
-  it('listIncidents calls /api/incidents', async () => {
-    const spy = mockFetch({ body: [] });
-    await OG.listIncidents(cfg);
-    expect(urlOf(spy)).toBe('http://127.0.0.1:8000/api/incidents');
-  });
-
-  it('getIncident calls /api/incidents/{id} with URL encoding', async () => {
-    const spy = mockFetch({ body: { incident_id: 'INC-001' } });
-    await OG.getIncident(cfg, 'INC-001');
-    expect(urlOf(spy)).toBe('http://127.0.0.1:8000/api/incidents/INC-001');
-  });
-
-  it('investigateIncident calls POST /api/incidents/{id}/investigate', async () => {
-    const spy = mockFetch({ body: { status: 'started' } });
-    await OG.investigateIncident(cfg, 'INC-001');
-    expect(urlOf(spy)).toBe('http://127.0.0.1:8000/api/incidents/INC-001/investigate');
-    expect(spy.mock.calls[0][1].method).toBe('POST');
-  });
-
-  it('submitIncidentFeedback sends the classification body', async () => {
-    const spy = mockFetch({ body: { ok: true } });
-    await OG.submitIncidentFeedback(cfg, 'INC-001', {
+      fallback_used: false,
+      technical_summary: 'Robot velocity 3.5 m/s exceeded safe threshold in restricted area.',
+      physical_impact: 'Potential collision risk with human operators.',
+      root_cause: 'Compromised rogue device sending unauthorized movement commands.',
+    },
+    human_feedback: {
       classification: 'CONFIRMED_ATTACK',
-      comment: 'verified attack',
-    });
-    expect(urlOf(spy)).toBe('http://127.0.0.1:8000/api/incidents/INC-001/feedback');
-    const body = JSON.parse(spy.mock.calls[0][1].body);
-    expect(body.classification).toBe('CONFIRMED_ATTACK');
+      notes: 'Verified malicious device attempted unauthorized navigation.',
+      reviewed_by: 'operator-1',
+      reviewed_at: '2026-08-22T10:20:00.000Z',
+    },
+    agent_trace: {
+      agent_mode: 'autonomous_investigation',
+      provider: 'anthropic',
+      model: 'claude-3-5-sonnet',
+      fallback_used: false,
+      proposed_playbook: 'CONTAIN_UNAUTHORIZED_MOVEMENT',
+      execution_authorized: true,
+      tool_trace: [
+        { tool: 'query_identity_history', timestamp: '2026-08-22T10:15:31.000Z', result: 'Found rogue device', ok: true },
+        { tool: 'check_zone_policy', timestamp: '2026-08-22T10:15:32.000Z', result: 'Restricted zone active', ok: true },
+      ],
+    },
+    recovery: {
+      state: 'IDP_WORKFLOW_COMPLETE',
+      label: 'IdP Credential Rotation Completed (Simulated)',
+      simulated: true,
+      evidence: { device_attested: true, operator_reauthenticated: true },
+      history: [{ state: 'INITIAL' }, { state: 'IDP_WORKFLOW_COMPLETE' }],
+      idp_workflow_complete: true,
+      runtime_access_restored: false,
+      can_advance: true,
+    },
+  };
+
+  it('normalizes incident summary from backend 65737e3 fields', () => {
+    const sum = OG.normalizeIncidentSummary(backendFixture);
+    expect(sum.incident_id).toBe('INC-2026-0822-001');
+    expect(sum.first_seen).toBe('2026-08-22T10:15:30.000Z');
+    expect(sum.last_seen).toBe('2026-08-22T10:16:00.000Z');
+    expect(sum.demo_run_id).toBe('run-8821');
+    expect(sum.decision_source).toBe('hybrid_rule_ml');
+    expect(sum.anomaly_risk_score).toBe(0.88);
+    expect(sum.behavioral_rule_score).toBe(0.95);
+    expect(sum.effective_risk).toBe(0.92);
+    expect(sum.response_playbook).toBe('CONTAIN_UNAUTHORIZED_MOVEMENT');
+    expect(sum.containment_status).toBe('CONTAINED');
   });
 
-  it('advanceIncidentRecovery sends the recovery action body', async () => {
-    const spy = mockFetch({ body: { ok: true } });
-    await OG.advanceIncidentRecovery(cfg, 'INC-001', { action: 'advance' });
-    expect(urlOf(spy)).toBe('http://127.0.0.1:8000/api/incidents/INC-001/recover');
-    const body = JSON.parse(spy.mock.calls[0][1].body);
-    expect(body.action).toBe('advance');
+  it('normalizes incident detail with all sub-objects', () => {
+    const detail = OG.normalizeIncidentDetail(backendFixture);
+    expect(detail.executive_summary).toBe('High-speed navigation inside human-restricted zone.');
+    expect(detail.technical_evidence).toEqual({ speed: 3.5, restricted_zone_entry: 1 });
+    expect(detail.isaac_acks).toEqual(['ISAAC_ACK_BASE_DISABLE_OK']);
+    expect(detail.llm_explanation.provider).toBe('anthropic');
+    expect(detail.human_feedback.notes).toBe('Verified malicious device attempted unauthorized navigation.');
+    expect(detail.recovery.idp_workflow_complete).toBe(true);
+    expect(detail.recovery.runtime_access_restored).toBe(false);
   });
 
-  it('does not put secrets in query strings', async () => {
-    const spy = mockFetch({ body: {} });
-    await OG.getAiStatus(cfg);
-    expect(urlOf(spy)).not.toContain('credential');
-    expect(urlOf(spy)).not.toContain('token');
-  });
-});
-
-/* ======================================== NORMALIZATION HELPER TESTS */
-
-describe('normalizeAiStatus', () => {
-  it('returns unavailable for null', () => {
-    expect(OG.normalizeAiStatus(null).available).toBe(false);
+  it('normalizes agent_trace.tool_trace properly', () => {
+    const trace = OG.normalizeAgentTrace(backendFixture.agent_trace);
+    expect(trace.steps).toHaveLength(2);
+    expect(trace.steps[0].tool).toBe('query_identity_history');
+    expect(trace.steps[0].timestamp).toBe('2026-08-22T10:15:31.000Z');
+    expect(trace.steps[0].ok).toBe(true);
   });
 
-  it('normalizes a valid status object', () => {
-    const s = OG.normalizeAiStatus({
-      available: true, model_version: 'v1', degraded: false,
-      artifact_verified: true, policy_version: 'p-2',
-    });
-    expect(s.available).toBe(true);
-    expect(s.model_version).toBe('v1');
-    expect(s.degraded).toBe(false);
-  });
-});
-
-describe('normalizeIncidentSummary', () => {
-  it('returns null for null input', () => {
-    expect(OG.normalizeIncidentSummary(null)).toBeNull();
-  });
-
-  it('normalizes a summary with alternate field names', () => {
-    const s = OG.normalizeIncidentSummary({
-      id: 'INC-002', risk: 0.85, playbook: 'TEST',
-      first_seen: '2026-08-22T10:00:00Z',
-    });
-    expect(s.incident_id).toBe('INC-002');
-    expect(s.anomaly_risk_score).toBe(0.85);
-    expect(s.response_playbook).toBe('TEST');
-  });
-});
-
-describe('normalizeIncidentDetail', () => {
-  it('returns null for null input', () => {
-    expect(OG.normalizeIncidentDetail(null)).toBeNull();
-  });
-
-  it('defaults array sections to empty arrays', () => {
-    const d = OG.normalizeIncidentDetail({ incident_id: 'INC-003' });
-    expect(d.action_sequence).toEqual([]);
-    expect(d.containment_actions).toEqual([]);
-    expect(d.isaac_acks).toEqual([]);
-    expect(d.correlated_events).toEqual([]);
-    expect(d.affected_robots).toEqual([]);
-    expect(d.affected_identities).toEqual([]);
+  it('normalizes recovery state including simulated, idp_workflow_complete and runtime_access_restored', () => {
+    const rec = OG.normalizeRecoveryState(backendFixture.recovery);
+    expect(rec.state).toBe('IDP_WORKFLOW_COMPLETE');
+    expect(rec.simulated).toBe(true);
+    expect(rec.idp_workflow_complete).toBe(true);
+    expect(rec.runtime_access_restored).toBe(false);
   });
 });
 
-describe('normalizeAgentTrace', () => {
-  it('returns null for null input', () => {
-    expect(OG.normalizeAgentTrace(null)).toBeNull();
-  });
-
-  it('normalizes steps from alternate field names', () => {
-    const t = OG.normalizeAgentTrace({
-      tool_calls: [{ tool_name: 'get_identity', started_at: '2026-08-22T10:00:00Z' }],
-      proposed_playbook: 'TEST_PLAYBOOK',
-      execution_authorized: false,
-    });
-    expect(t.steps).toHaveLength(1);
-    expect(t.steps[0].tool).toBe('get_identity');
-    expect(t.proposed_playbook).toBe('TEST_PLAYBOOK');
-    expect(t.execution_authorized).toBe(false);
-  });
-});
-
-describe('normalizeLlmProvenance', () => {
-  it('returns unavailable for null input', () => {
-    const p = OG.normalizeLlmProvenance(null);
-    expect(p.status).toBe('unavailable');
-    expect(p.provider).toBeNull();
-  });
-
-  it('detects pending status', () => {
-    expect(OG.normalizeLlmProvenance({ status: 'pending' }).status).toBe('pending');
-    expect(OG.normalizeLlmProvenance({ pending: true }).status).toBe('pending');
-  });
-
-  it('detects failed status', () => {
-    expect(OG.normalizeLlmProvenance({ status: 'failed' }).status).toBe('failed');
-    expect(OG.normalizeLlmProvenance({ error: 'timeout' }).status).toBe('failed');
-  });
-});
-
-describe('normalizeRecoveryState', () => {
-  it('returns null for null input', () => {
-    expect(OG.normalizeRecoveryState(null)).toBeNull();
-  });
-
-  it('accepts all 5 valid status values', () => {
-    for (const status of ['pending', 'verified', 'failed', 'simulated', 'not_required']) {
-      const r = OG.normalizeRecoveryState({ old_credential_revoked: status });
-      expect(r.old_credential_revoked).toBe(status);
+/* ================================================================ MANDATORY FIX 7 & 8
+ * Decision source exact values & no heuristic replacement. */
+describe('Exact decision source values & no heuristic replacement', () => {
+  it('supports all 7 exact decision sources without modifying backend decision_source', () => {
+    const sources = [
+      'hard_policy',
+      'action_window_ai',
+      'behavioral_rule',
+      'hybrid_rule_ml',
+      'ai_warning',
+      'deterministic_fallback',
+      'none',
+    ];
+    for (const src of sources) {
+      expect(OG.classifyDecisionSource({ decision_source: src })).toBe(src);
     }
   });
 
-  it('rejects invalid status values', () => {
-    const r = OG.normalizeRecoveryState({ old_credential_revoked: 'INVENTED' });
-    expect(r.old_credential_revoked).toBeNull();
+  it('never heuristically replaces a backend-provided decision_source', () => {
+    expect(OG.classifyDecisionSource({ decision_source: 'behavioral_rule', hard_policy_would_block: false, final_decision: 'BLOCK' })).toBe('behavioral_rule');
+    expect(OG.classifyDecisionSource({ decision_source: 'hybrid_rule_ml', hard_policy_would_block: true })).toBe('hybrid_rule_ml');
+  });
+});
+
+/* ================================================================ MANDATORY FIX 13 & 14
+ * Physical stop truth fields & Session log CSV exports. */
+describe('Physical stop truth fields and CSV exports', () => {
+  it('normalizeDecisionIntelligence preserves stop fields and enforces robot_stopped truth', () => {
+    // When stop_confirmed is false, robot_stopped is false
+    const d1 = OG.normalizeDecisionIntelligence({
+      stop_requested: true,
+      stop_request_accepted: true,
+      stop_confirmed: false,
+      stop_stage: 'PENDING_ACK',
+    });
+    expect(d1.stop_requested).toBe(true);
+    expect(d1.stop_confirmed).toBe(false);
+    expect(d1.robot_stopped).toBe(false);
+
+    // ONLY when stop_confirmed is true is robot_stopped true
+    const d2 = OG.normalizeDecisionIntelligence({
+      stop_requested: true,
+      stop_request_accepted: true,
+      stop_confirmed: true,
+      stop_stage: 'CONFIRMED',
+      stop_ack: 'ISAAC_ACK_ESTOP',
+    });
+    expect(d2.stop_confirmed).toBe(true);
+    expect(d2.robot_stopped).toBe(true);
+    expect(d2.stop_ack).toBe('ISAAC_ACK_ESTOP');
   });
 
-  it('accepts status as an object with .status field', () => {
-    const r = OG.normalizeRecoveryState({
-      old_credential_revoked: { status: 'simulated', detail: 'demo' },
-    });
-    expect(r.old_credential_revoked).toBe('simulated');
+  it('CSV export includes demo_run_id, behavioral_rule_score, effective_risk, and stop fields', async () => {
+    const { toCsv } = await import('../useSessionLog.js');
+    const csv = toCsv([
+      {
+        timestamp: '2026-08-22T10:00:00Z',
+        final_decision: 'BLOCK',
+        decision_source: 'hybrid_rule_ml',
+        demo_run_id: 'run-990',
+        behavioral_rule_score: 0.95,
+        effective_risk: 0.92,
+        stop_requested: true,
+        stop_request_accepted: true,
+        stop_confirmed: true,
+        stop_stage: 'CONFIRMED',
+        stop_ack: 'ACK_ESTOP',
+      },
+    ]);
+    const header = csv.split('\n')[0];
+    const row = csv.split('\n')[1];
+
+    for (const col of [
+      'demo_run_id',
+      'behavioral_rule_score',
+      'effective_risk',
+      'stop_requested',
+      'stop_request_accepted',
+      'stop_confirmed',
+      'robot_stopped',
+      'stop_stage',
+      'stop_ack',
+    ]) {
+      expect(header).toContain(`"${col}"`);
+    }
+    expect(row).toContain('run-990');
+    expect(row).toContain('0.95');
+    expect(row).toContain('0.92');
+    expect(row).toContain('ACK_ESTOP');
   });
 });

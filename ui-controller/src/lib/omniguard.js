@@ -402,18 +402,24 @@ export function headingFrom(robot, target, trail) {
 /* ============================================================= AI ENDPOINTS
  * Consume the backend AI response engine. These endpoints may return 404 when
  * the AI branch has not been merged; callers must degrade gracefully.
- * Mutating endpoints (investigate, feedback, recover) are never auto-retried. */
+ * Mutating endpoints (investigate, feedback, recover) are never auto-retried.
+ * All mutation endpoints send X-OmniGuard-Operator header for authorization. */
+
+const operatorHeaders = (cfg) => {
+  const token = cfg?.operatorToken || DEMO_OPERATOR_TOKEN;
+  return token ? { [OPERATOR_HEADER]: token } : {};
+};
 
 export const getAiStatus = (cfg) => apiGet(cfg, "/api/ai/status");
 export const listIncidents = (cfg) => apiGet(cfg, "/api/incidents");
 export const getIncident = (cfg, id) =>
   apiGet(cfg, `/api/incidents/${encodeURIComponent(id)}`);
 export const investigateIncident = (cfg, id) =>
-  apiPost(cfg, `/api/incidents/${encodeURIComponent(id)}/investigate`);
+  apiPost(cfg, `/api/incidents/${encodeURIComponent(id)}/investigate`, undefined, operatorHeaders(cfg));
 export const submitIncidentFeedback = (cfg, id, body) =>
-  apiPost(cfg, `/api/incidents/${encodeURIComponent(id)}/feedback`, body);
+  apiPost(cfg, `/api/incidents/${encodeURIComponent(id)}/feedback`, body, operatorHeaders(cfg));
 export const advanceIncidentRecovery = (cfg, id, body) =>
-  apiPost(cfg, `/api/incidents/${encodeURIComponent(id)}/recover`, body);
+  apiPost(cfg, `/api/incidents/${encodeURIComponent(id)}/recover`, body, operatorHeaders(cfg));
 
 /* ======================================================== NORMALIZATION
  * Pure helpers that shape backend responses into the forms components expect.
@@ -447,41 +453,70 @@ export function normalizeAiStatus(raw) {
   };
 }
 
-/** Decision-source classification: never a guess; the backend decides. */
+/** Decision-source values from backend main commit 65737e3.
+ * Never heuristically replace a backend-provided decision_source. */
 const DECISION_SOURCES = [
-  "HARD_POLICY", "ACTION_WINDOW_AI", "AI_WARNING", "FALLBACK", "NO_BLOCK",
+  "hard_policy",
+  "action_window_ai",
+  "behavioral_rule",
+  "hybrid_rule_ml",
+  "ai_warning",
+  "deterministic_fallback",
+  "none",
 ];
 
 export function classifyDecisionSource(event) {
   if (!event) return null;
-  const src = str(event.decision_source)?.toUpperCase().replace(/-/g, "_");
-  if (src && DECISION_SOURCES.includes(src)) return src;
-  if (event.hard_policy_would_block === true) return "HARD_POLICY";
-  if (event.hard_policy_would_block === false && event.final_decision !== "ALLOW")
-    return "ACTION_WINDOW_AI";
+  const rawSrc = str(event.decision_source) ?? str(event.ai_evidence?.decision_source);
+  if (rawSrc) {
+    const srcLower = rawSrc.toLowerCase();
+    if (DECISION_SOURCES.includes(srcLower)) return srcLower;
+    return rawSrc;
+  }
+  if (event.hard_policy_would_block === true || event.ai_evidence?.hard_policy_would_block === true) {
+    return "hard_policy";
+  }
+  if (
+    (event.hard_policy_would_block === false || event.ai_evidence?.hard_policy_would_block === false) &&
+    event.final_decision !== "ALLOW"
+  ) {
+    return "action_window_ai";
+  }
   return null;
 }
 
 export function normalizeDecisionIntelligence(event) {
   if (!event || typeof event !== "object") return null;
+  const ev = event.ai_evidence ?? {};
   return {
     decision_source: classifyDecisionSource(event),
     final_decision: str(event.final_decision),
-    hard_policy_would_block: bool(event.hard_policy_would_block),
-    hard_policy_reasons: arr(event.hard_policy_reasons),
-    anomaly_risk_score: num(event.anomaly_risk_score),
-    anomaly_model: str(event.anomaly_model),
-    anomaly_model_version: str(event.anomaly_model_version),
-    anomaly_features: event.anomaly_features && typeof event.anomaly_features === "object"
-      ? event.anomaly_features : null,
-    ai_mode: str(event.ai_mode),
+    hard_policy_would_block: bool(ev.hard_policy_would_block) ?? bool(event.hard_policy_would_block),
+    hard_policy_reasons: arr(ev.hard_policy_reasons ?? event.hard_policy_reasons),
+    anomaly_risk_score: num(ev.anomaly_risk_score) ?? num(event.anomaly_risk_score),
+    behavioral_rule_score: num(ev.behavioral_rule_score) ?? num(event.behavioral_rule_score),
+    effective_risk: num(ev.effective_risk) ?? num(event.effective_risk),
+    anomaly_model: str(ev.anomaly_model) ?? str(event.anomaly_model),
+    anomaly_model_version: str(ev.model_version) ?? str(event.anomaly_model_version),
+    anomaly_features:
+      (ev.anomaly_features && typeof ev.anomaly_features === "object" ? ev.anomaly_features : null) ??
+      (event.anomaly_features && typeof event.anomaly_features === "object" ? event.anomaly_features : null),
+    ai_mode: str(ev.ai_mode) ?? str(event.ai_mode),
     /* model_confidence: null stays null — never rendered as 0% or N/A. */
-    model_confidence: num(event.model_confidence),
+    model_confidence: num(ev.model_confidence) ?? num(event.model_confidence),
     incident_id: str(event.incident_id),
-    response_playbook: str(event.response_playbook),
-    artifact_verified: bool(event.artifact_verified),
-    model_degraded: bool(event.model_degraded),
-    policy_version: str(event.policy_version),
+    response_playbook: str(event.response_playbook) ?? str(event.playbook),
+    artifact_verified: bool(ev.artifact_verified) ?? bool(event.artifact_verified),
+    model_degraded: bool(ev.model_degraded) ?? bool(event.model_degraded),
+    policy_version: str(ev.policy_version) ?? str(event.policy_version),
+
+    /* Physical-stop truth fields */
+    stop_requested: bool(event.stop_requested),
+    stop_request_accepted: bool(event.stop_request_accepted),
+    stop_confirmed: bool(event.stop_confirmed),
+    robot_stopped: bool(event.stop_confirmed), // NEVER true unless stop_confirmed === true
+    stop_stage: str(event.stop_stage),
+    stop_ack: str(event.stop_ack),
 
     /* Presentation flags derived from the normalized shape, not policy. */
     credential_status: str(event.credential_status),
@@ -493,19 +528,25 @@ export function normalizeDecisionIntelligence(event) {
 
 export function normalizeIncidentSummary(raw) {
   if (!raw || typeof raw !== "object") return null;
+  const aiEv = raw.ai_evidence ?? {};
   return {
     incident_id: str(raw.incident_id) ?? str(raw.id),
     status: str(raw.status),
-    first_seen: iso(raw.first_seen),
-    last_seen: iso(raw.last_seen),
+    first_seen: iso(raw.first_event_at) ?? iso(raw.first_seen),
+    last_seen: iso(raw.last_event_at) ?? iso(raw.last_seen),
     event_count: num(raw.event_count) ?? num(raw.count),
     agent_id: str(raw.agent_id),
     device_id: str(raw.device_id),
     robot_id: str(raw.robot_id),
-    decision_source: str(raw.decision_source),
-    anomaly_risk_score: num(raw.anomaly_risk_score) ?? num(raw.risk),
-    response_playbook: str(raw.response_playbook) ?? str(raw.playbook),
-    containment_status: str(raw.containment_status),
+    demo_run_id: str(raw.demo_run_id),
+    decision_source: str(raw.decision_source) ?? str(aiEv.decision_source),
+    anomaly_risk_score: num(aiEv.anomaly_risk_score) ?? num(raw.anomaly_risk_score) ?? num(raw.risk),
+    behavioral_rule_score: num(aiEv.behavioral_rule_score) ?? num(raw.behavioral_rule_score),
+    effective_risk: num(aiEv.effective_risk) ?? num(raw.effective_risk),
+    response_playbook: str(raw.playbook) ?? str(raw.response_playbook),
+    containment_status: str(raw.containment?.status) ?? str(raw.containment_status),
+    model_version: str(raw.model_version) ?? str(aiEv.model_version),
+    policy_version: str(raw.policy_version) ?? str(aiEv.policy_version),
     raw: raw,
   };
 }
@@ -513,32 +554,39 @@ export function normalizeIncidentSummary(raw) {
 export function normalizeIncidentDetail(raw) {
   if (!raw || typeof raw !== "object") return null;
   const summary = normalizeIncidentSummary(raw);
+  const llmExpl = raw.llm_explanation ?? raw.explanation ?? raw.incident_explanation ?? null;
   return {
     ...summary,
     /* Section 1: Executive summary */
-    executive_summary: str(raw.executive_summary) ?? str(raw.summary),
+    executive_summary:
+      str(llmExpl?.summary) ?? str(llmExpl?.operator_summary) ?? str(raw.executive_summary) ?? str(raw.summary),
     /* Section 2: Technical evidence */
-    technical_evidence: raw.technical_evidence ?? null,
+    technical_evidence: raw.technical_evidence ?? raw.ai_evidence?.anomaly_features ?? null,
     /* Section 3: Identity and device */
-    identity: raw.identity ?? null,
+    identity: raw.identity ?? (raw.agent_id || raw.device_id ? { agent_id: raw.agent_id, device_id: raw.device_id } : null),
     /* Section 4: Action sequence */
     action_sequence: arr(raw.action_sequence),
     /* Section 5: Robot and zone context */
-    robot_context: raw.robot_context ?? null,
+    robot_context: raw.robot_context ?? (raw.robot_id ? { robot_id: raw.robot_id } : null),
     /* Section 6: AI model evidence */
-    ai_model_evidence: raw.ai_model_evidence ?? null,
+    ai_evidence: raw.ai_evidence ?? null,
     /* Section 7: Hard-policy evidence */
-    hard_policy_evidence: raw.hard_policy_evidence ?? null,
+    hard_policy: raw.hard_policy ?? raw.hard_policy_evidence ?? null,
     /* Section 8: Containment actions */
-    containment_actions: arr(raw.containment_actions),
+    containment: raw.containment ?? null,
     /* Section 9: Isaac acknowledgements */
-    isaac_acks: arr(raw.isaac_acks ?? raw.isaac_acknowledgements),
+    isaac_acks: arr(
+      raw.containment?.bridge_acknowledgements ??
+        raw.containment?.acknowledgements ??
+        raw.isaac_acks ??
+        raw.isaac_acknowledgements
+    ),
     /* Section 10: Agent investigation */
     agent_trace: raw.agent_trace ?? raw.investigation ?? null,
     /* Section 11: LLM explanation + provenance */
-    explanation: raw.explanation ?? raw.incident_explanation ?? null,
+    llm_explanation: llmExpl,
     /* Section 12: Feedback */
-    feedback: raw.feedback ?? null,
+    human_feedback: raw.human_feedback ?? raw.feedback ?? null,
     /* Section 13: Recovery */
     recovery: raw.recovery ?? null,
     /* Event correlation */
@@ -551,18 +599,22 @@ export function normalizeIncidentDetail(raw) {
 
 export function normalizeAgentTrace(raw) {
   if (!raw || typeof raw !== "object") return null;
-  const steps = arr(raw.steps ?? raw.tool_calls).map((s) => ({
+  const rawSteps = arr(raw.tool_trace ?? raw.steps ?? raw.tool_calls);
+  const steps = rawSteps.map((s) => ({
     tool: str(s.tool) ?? str(s.tool_name) ?? str(s.name),
-    start_time: iso(s.start_time ?? s.started_at),
+    timestamp: iso(s.timestamp ?? s.start_time ?? s.started_at),
+    start_time: iso(s.start_time ?? s.timestamp ?? s.started_at),
     end_time: iso(s.end_time ?? s.completed_at),
+    result: str(s.result ?? s.result_summary ?? s.summary),
     result_summary: str(s.result_summary ?? s.result ?? s.summary),
+    ok: s.ok !== false && !s.error,
     error: str(s.error),
   }));
   return {
     agent_mode: str(raw.agent_mode ?? raw.mode),
     provider: str(raw.provider),
     model: str(raw.model),
-    fallback_used: raw.fallback_used === true,
+    fallback_used: raw.fallback_used === true || raw.is_fallback === true,
     tools_used: arr(raw.tools_used),
     proposed_playbook: str(raw.proposed_playbook ?? raw.playbook),
     /* Critical: proposed !== executed. Containment must confirm execution. */
@@ -606,27 +658,18 @@ export function normalizeLlmProvenance(raw) {
   };
 }
 
-const RECOVERY_STATUSES = ["pending", "verified", "failed", "simulated", "not_required"];
-const normalizeRecoveryStep = (v) => {
-  if (typeof v === "string" && RECOVERY_STATUSES.includes(v)) return v;
-  if (v && typeof v === "object" && RECOVERY_STATUSES.includes(v.status)) return v.status;
-  return null;
-};
-
 export function normalizeRecoveryState(raw) {
   if (!raw || typeof raw !== "object") return null;
   return {
-    old_credential_revoked: normalizeRecoveryStep(raw.old_credential_revoked),
-    new_credential_issued: normalizeRecoveryStep(raw.new_credential_issued),
-    device_attested: normalizeRecoveryStep(raw.device_attested),
-    operator_reauthenticated: normalizeRecoveryStep(raw.operator_reauthenticated),
-    related_incidents_closed: normalizeRecoveryStep(raw.related_incidents_closed),
-    risk_below_threshold: normalizeRecoveryStep(raw.risk_below_threshold),
-    limited_access_enabled: normalizeRecoveryStep(raw.limited_access_enabled),
-    enhanced_monitoring_active: normalizeRecoveryStep(raw.enhanced_monitoring_active),
-    full_access_restored: normalizeRecoveryStep(raw.full_access_restored),
-    current_stage: str(raw.current_stage),
+    state: str(raw.state),
+    label: str(raw.label),
+    simulated: raw.simulated === true,
+    evidence: raw.evidence && typeof raw.evidence === "object" ? raw.evidence : {},
+    history: arr(raw.history),
+    idp_workflow_complete: raw.idp_workflow_complete === true,
+    runtime_access_restored: raw.runtime_access_restored === true,
     can_advance: raw.can_advance === true,
   };
 }
+
 

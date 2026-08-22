@@ -50,21 +50,29 @@ export default function AgentTrace({ raw }) {
                 {i + 1}
               </span>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <Bot size={10} className="shrink-0 text-violet" aria-hidden="true" />
-                  <span className="font-mono text-[10.5px] text-dim">
-                    {step.tool?.replace(/_/g, ' ') ?? 'unknown tool'}
-                  </span>
+                <div className="flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <Bot size={10} className="shrink-0 text-violet" aria-hidden="true" />
+                    <span className="font-mono text-[10.5px] font-semibold text-dim">
+                      {step.tool?.replace(/_/g, ' ') ?? 'unknown tool'}
+                    </span>
+                  </div>
+                  {step.ok ? (
+                    <span className="chip border-ok/45 text-ok text-[8.5px]">OK</span>
+                  ) : (
+                    <span className="chip border-bad/45 text-bad text-[8.5px]">FAILED</span>
+                  )}
                 </div>
                 <div className="mt-0.5 flex items-center gap-2 font-mono text-[9px] text-faint">
-                  {step.start_time && <span>{clock(step.start_time)}</span>}
+                  {step.timestamp && <span>{clock(step.timestamp)}</span>}
+                  {!step.timestamp && step.start_time && <span>{clock(step.start_time)}</span>}
                   {step.start_time && step.end_time && (
                     <ChevronRight size={8} className="text-faint" aria-hidden="true" />
                   )}
                   {step.end_time && <span>{clock(step.end_time)}</span>}
                 </div>
-                {step.result_summary && (
-                  <p className="mt-0.5 text-[10px] text-dim">{step.result_summary}</p>
+                {(step.result || step.result_summary) && (
+                  <p className="mt-0.5 font-mono text-[10px] text-dim">{step.result ?? step.result_summary}</p>
                 )}
                 {step.error && (
                   <p className="mt-0.5 flex items-center gap-1 text-[10px] text-bad">

@@ -129,8 +129,18 @@ export function useIncidents(cfg, { enabled = false } = {}) {
     };
   }, [enabled, activeIncident, cfg.api]);
 
+  const refreshActiveIncident = useCallback(async () => {
+    if (!activeIncident) return;
+    try {
+      const raw = await getIncident(cfgRef.current, activeIncident);
+      setActiveDetail(normalizeIncidentDetail(raw));
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [activeIncident]);
+
   return {
     aiStatus, aiAvailable, incidents, activeIncident, activeDetail, error,
-    selectIncident,
+    selectIncident, refresh: refreshActiveIncident,
   };
 }

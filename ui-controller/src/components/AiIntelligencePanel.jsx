@@ -7,11 +7,19 @@ import {
 
 /* Decision-source badge labels. Sorted strongest to weakest for presentation. */
 const SOURCE_BADGE = {
-  HARD_POLICY:      { label: 'Hard policy',       cls: 'border-bad/55 bg-bad/10 text-bad' },
-  ACTION_WINDOW_AI: { label: 'Action-window AI',  cls: 'border-info/55 bg-info/10 text-info' },
-  AI_WARNING:       { label: 'AI warning',         cls: 'border-warn/55 bg-warn/10 text-warn' },
-  FALLBACK:         { label: 'Fallback',           cls: 'border-faint/55 bg-faint/10 text-faint' },
-  NO_BLOCK:         { label: 'No block',           cls: 'border-ok/55 bg-ok/10 text-ok' },
+  hard_policy:            { label: 'Hard policy',            cls: 'border-bad/55 bg-bad/10 text-bad' },
+  action_window_ai:       { label: 'Action-window AI',       cls: 'border-info/55 bg-info/10 text-info' },
+  behavioral_rule:        { label: 'Behavioral rule',        cls: 'border-warn/55 bg-warn/10 text-warn' },
+  hybrid_rule_ml:         { label: 'Hybrid rule ML',         cls: 'border-violet/55 bg-violet/10 text-violet' },
+  ai_warning:             { label: 'AI warning',             cls: 'border-warn/55 bg-warn/10 text-warn' },
+  deterministic_fallback: { label: 'Deterministic fallback', cls: 'border-faint/55 bg-faint/10 text-faint' },
+  none:                   { label: 'No block',               cls: 'border-ok/55 bg-ok/10 text-ok' },
+  // Upper case fallbacks
+  HARD_POLICY:            { label: 'Hard policy',            cls: 'border-bad/55 bg-bad/10 text-bad' },
+  ACTION_WINDOW_AI:       { label: 'Action-window AI',       cls: 'border-info/55 bg-info/10 text-info' },
+  AI_WARNING:             { label: 'AI warning',             cls: 'border-warn/55 bg-warn/10 text-warn' },
+  FALLBACK:               { label: 'Fallback',               cls: 'border-faint/55 bg-faint/10 text-faint' },
+  NO_BLOCK:               { label: 'No block',               cls: 'border-ok/55 bg-ok/10 text-ok' },
 };
 
 function HardPolicyMessage({ d }) {
@@ -72,7 +80,7 @@ export default function AiIntelligencePanel({ event }) {
   if (!d) return null;
 
   const src = d.decision_source;
-  const badge = src ? SOURCE_BADGE[src] : null;
+  const badge = src ? (SOURCE_BADGE[src] ?? { label: src.replace(/_/g, ' '), cls: 'border-faint/55 text-faint' }) : null;
 
   return (
     <section className="card p-3.5 space-y-2.5" aria-label="AI intelligence">
@@ -94,6 +102,30 @@ export default function AiIntelligencePanel({ event }) {
       <AiModeMessage mode={d.ai_mode} />
       <DegradedWarning degraded={d.model_degraded} />
 
+      {/* Physical-stop Truth Display */}
+      {d.stop_requested && (
+        <div className={`flex items-center justify-between rounded-xl border px-3 py-1.5 font-mono text-[10px] ${d.stop_confirmed ? 'border-bad/45 bg-bad/10 text-bad' : 'border-warn/45 bg-warn/10 text-warn'}`}>
+          <span>Physical Stop: {d.stop_confirmed ? 'CONFIRMED (ROBOT STOPPED)' : `STAGE (${d.stop_stage ?? 'REQUESTED'})`}</span>
+          {d.stop_ack && <span className="text-[9px] text-faint">ack: {d.stop_ack}</span>}
+        </div>
+      )}
+
+      {/* Three Risk Metrics Display */}
+      <div className="grid grid-cols-3 gap-1.5 font-mono text-[9.5px]">
+        <div className="rounded-lg border border-line bg-sunken/70 px-2 py-1 text-center">
+          <span className="block text-faint text-[8.5px]">Anomaly Risk (iForest)</span>
+          <span className="font-bold text-dim">{d.anomaly_risk_score != null ? d.anomaly_risk_score.toFixed(2) : '—'}</span>
+        </div>
+        <div className="rounded-lg border border-line bg-sunken/70 px-2 py-1 text-center">
+          <span className="block text-faint text-[8.5px]">Behavioral Rule Score</span>
+          <span className="font-bold text-dim">{d.behavioral_rule_score != null ? d.behavioral_rule_score.toFixed(2) : '—'}</span>
+        </div>
+        <div className="rounded-lg border border-line bg-sunken/70 px-2 py-1 text-center">
+          <span className="block text-faint text-[8.5px]">Effective Risk</span>
+          <span className="font-bold text-info">{d.effective_risk != null ? d.effective_risk.toFixed(2) : '—'}</span>
+        </div>
+      </div>
+
       {/* Stacked evidence summary */}
       <dl className="grid grid-cols-2 gap-1 font-mono text-[10px]">
         {[
@@ -106,6 +138,7 @@ export default function AiIntelligencePanel({ event }) {
           ['Policy version', d.policy_version],
           ['Incident ID', d.incident_id],
           ['Response playbook', d.response_playbook?.replace(/_/g, ' ')],
+          ['Stop confirmed', d.stop_confirmed != null ? (d.stop_confirmed ? 'YES (STOPPED)' : 'NO') : null],
         ].filter(([, v]) => v != null).map(([label, value]) => (
           <div key={label} className="flex items-baseline justify-between gap-1 rounded-md
                                       border border-line bg-sunken/70 px-1.5 py-0.5">

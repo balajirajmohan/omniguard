@@ -42,7 +42,7 @@ export default function IncidentFeedback({ incidentId, existingFeedback, cfg }) 
     try {
       await submitIncidentFeedback(cfg, incidentId, {
         classification,
-        comment: comment.trim() || undefined,
+        notes: comment.trim() || undefined,
       });
       setSubmitted(true);
     } catch (err) {
@@ -55,7 +55,8 @@ export default function IncidentFeedback({ incidentId, existingFeedback, cfg }) 
 
   /* Show saved feedback if returned by the backend */
   if (existingFeedback || submitted) {
-    const fb = existingFeedback ?? { classification, comment: comment.trim() || undefined };
+    const fb = existingFeedback ?? { classification, notes: comment.trim() || undefined };
+    const notesText = fb.notes ?? fb.comment;
     return (
       <div className="space-y-2">
         <div className="flex items-center gap-2 rounded-xl border border-ok/45 bg-ok/10 px-3 py-2">
@@ -67,10 +68,10 @@ export default function IncidentFeedback({ incidentId, existingFeedback, cfg }) 
             <dt className="text-faint">Classification:</dt>
             <dd className="text-dim">{fb.classification?.replace(/_/g, ' ')}</dd>
           </div>
-          {fb.comment && (
+          {notesText && (
             <div className="flex gap-2">
-              <dt className="text-faint">Comment:</dt>
-              <dd className="text-dim">{fb.comment}</dd>
+              <dt className="text-faint">Notes:</dt>
+              <dd className="text-dim">{notesText}</dd>
             </div>
           )}
           {fb.reviewed_by && (

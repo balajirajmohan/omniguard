@@ -133,6 +133,7 @@ export default function App() {
           activeDetail={inc.activeDetail}
           selectedId={inc.activeIncident}
           onSelect={inc.selectIncident}
+          onRefresh={inc.refresh}
           aiAvailable={inc.aiAvailable}
           error={inc.error}
           cfg={cfg}

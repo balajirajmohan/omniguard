@@ -1,122 +1,193 @@
 import { useState } from 'react';
-import { AlertTriangle, CheckCircle2, Clock, Loader2, RefreshCw, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, Info, Loader2, Play, RefreshCw, ShieldAlert, ShieldCheck, XCircle } from 'lucide-react';
 import { advanceIncidentRecovery, normalizeRecoveryState } from '../lib/omniguard.js';
 
-/* Explicit status values from the backend. */
-const STATUS_LOOK = {
-  pending:      { Icon: Clock,        cls: 'text-faint',  word: 'PENDING' },
-  verified:     { Icon: CheckCircle2, cls: 'text-ok',     word: 'VERIFIED' },
-  failed:       { Icon: XCircle,      cls: 'text-bad',    word: 'FAILED' },
-  simulated:    { Icon: AlertTriangle, cls: 'text-warn',  word: 'SIMULATED FOR DEMO' },
-  not_required: { Icon: CheckCircle2, cls: 'text-faint',  word: 'NOT REQUIRED' },
-};
-
-const STEP_LABELS = [
-  ['old_credential_revoked',    'Old credential revoked'],
-  ['new_credential_issued',     'New credential issued'],
-  ['device_attested',           'Device attested'],
-  ['operator_reauthenticated',  'Operator reauthenticated'],
-  ['related_incidents_closed',  'Related incidents closed'],
-  ['risk_below_threshold',      'Risk below recovery threshold'],
-  ['limited_access_enabled',    'Limited access enabled'],
-  ['enhanced_monitoring_active','Enhanced monitoring active'],
-  ['full_access_restored',      'Full access restored'],
-];
-
-/**
- * Recovery progress panel.
- *
- * Requirements:
- * - Uses explicit status values (pending/verified/failed/simulated/not_required)
- * - Simulated operations show "SIMULATED FOR DEMO"
- * - Recovery requires an explicit authorized operator action
- * - Does NOT automatically call the recovery endpoint
- * - Does NOT skip backend-required recovery stages
- */
-export default function RecoveryPanel({ incidentId, raw, cfg }) {
+export default function RecoveryPanel({ incidentId, raw, cfg, onRefresh }) {
   const recovery = normalizeRecoveryState(raw);
-  const [confirming, setConfirming] = useState(false);
+  const [confirmingAction, setConfirmingAction] = useState(null); // 'start' | 'advance' | null
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
   if (!recovery) {
     return (
-      <p className="text-[11px] text-faint">
-        No recovery state available from the backend.
-      </p>
+      <div className="space-y-2">
+        <p className="text-[11px] text-faint">
+          No active recovery workflow for this incident.
+        </p>
+        <button
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            try {
+              await advanceIncidentRecovery(cfg, incidentId, {});
+              onRefresh?.();
+            } catch (err) {
+              setError(err.message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+          disabled={busy}
+          className="btn btn-sm"
+        >
+          {busy ? <Loader2 size={11} className="animate-spin" aria-hidden="true" /> : <Play size={11} aria-hidden="true" />}
+          Initialize recovery
+        </button>
+        {error && <p className="rounded-lg border border-bad/45 bg-bad/10 px-2 py-1 font-mono text-[10px] text-bad">{error}</p>}
+      </div>
     );
   }
 
-  const advance = async () => {
+  const handleStart = async () => {
     setBusy(true);
     setError(null);
     try {
-      await advanceIncidentRecovery(cfg, incidentId, { action: 'advance' });
+      await advanceIncidentRecovery(cfg, incidentId, {});
+      onRefresh?.();
     } catch (err) {
       setError(err.message);
     } finally {
       setBusy(false);
-      setConfirming(false);
+      setConfirmingAction(null);
     }
   };
 
-  return (
-    <div className="space-y-2.5">
-      {/* Recovery checklist */}
-      <ol className="space-y-1" aria-label="Recovery progress">
-        {STEP_LABELS.map(([key, label]) => {
-          const value = recovery[key];
-          if (value == null) return null;
-          const look = STATUS_LOOK[value] ?? STATUS_LOOK.pending;
-          const { Icon } = look;
-          return (
-            <li key={key} className="flex items-center gap-2.5 rounded-lg border border-line
-                                     bg-sunken/70 px-2.5 py-1.5">
-              <Icon size={12} className={`shrink-0 ${look.cls}`} aria-hidden="true" />
-              <span className="flex-1 text-[10.5px] text-dim">{label}</span>
-              <span className={`font-mono text-[9px] font-bold tracking-wide ${look.cls}`}
-                role="status" aria-label={`${label}: ${look.word}`}>
-                {look.word}
-              </span>
-            </li>
-          );
-        })}
-      </ol>
+  const handleAdvance = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await advanceIncidentRecovery(cfg, incidentId, {
+        evidence: { device_attested: true, operator_reauthenticated: true },
+      });
+      onRefresh?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+      setConfirmingAction(null);
+    }
+  };
 
-      {/* Current stage */}
-      {recovery.current_stage && (
-        <p className="font-mono text-[10px] text-faint">
-          Current stage: {recovery.current_stage.replace(/_/g, ' ')}
-        </p>
+  const evidenceEntries = Object.entries(recovery.evidence ?? {});
+
+  return (
+    <div className="space-y-3">
+      {/* Overview Card */}
+      <div className="rounded-xl border border-line bg-sunken/70 p-3 space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            {recovery.runtime_access_restored ? (
+              <ShieldCheck size={14} className="text-ok shrink-0" aria-hidden="true" />
+            ) : (
+              <ShieldAlert size={14} className="text-warn shrink-0" aria-hidden="true" />
+            )}
+            <span className="font-mono text-[11px] font-bold text-txt">
+              State: {recovery.state ?? 'INITIAL'}
+            </span>
+          </div>
+          {recovery.simulated && (
+            <span className="chip border-warn/45 bg-warn/10 text-warn text-[9.5px]">
+              SIMULATED FOR DEMO
+            </span>
+          )}
+        </div>
+
+        {recovery.label && (
+          <p className="text-[11px] leading-relaxed text-dim">{recovery.label}</p>
+        )}
+
+        <div className="grid grid-cols-2 gap-2 font-mono text-[10px] pt-1">
+          <div className="flex items-center justify-between rounded-md border border-line bg-elevated/50 px-2 py-1">
+            <span className="text-faint">IdP Workflow:</span>
+            <span className={recovery.idp_workflow_complete ? 'text-ok font-semibold' : 'text-faint'}>
+              {recovery.idp_workflow_complete ? 'COMPLETE' : 'PENDING'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between rounded-md border border-line bg-elevated/50 px-2 py-1">
+            <span className="text-faint">Runtime Access:</span>
+            <span className={recovery.runtime_access_restored ? 'text-ok font-semibold' : 'text-bad font-semibold'}>
+              {recovery.runtime_access_restored ? 'RESTORED' : 'RESTRICTED'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Mandatory Notice: Completed simulated IdP recovery does not restore runtime access */}
+      {recovery.idp_workflow_complete && !recovery.runtime_access_restored && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-warn/45 bg-warn/10 px-3 py-2.5" role="status">
+          <Info size={14} className="mt-0.5 shrink-0 text-warn" aria-hidden="true" />
+          <p className="text-[11px] leading-relaxed text-warn">
+            <b>IdP workflow complete does not mean runtime access has been restored.</b>{' '}
+            Completed simulated IdP recovery does not restore runtime robot access until verified by backend security.
+          </p>
+        </div>
+      )}
+
+      {/* Evidence Checklist */}
+      {evidenceEntries.length > 0 && (
+        <div>
+          <span className="label mb-1">Recovery Evidence</span>
+          <ul className="space-y-1 font-mono text-[10px]">
+            {evidenceEntries.map(([key, val]) => {
+              const isTrue = val === true || val === 'verified' || val === 'COMPLETE';
+              return (
+                <li key={key} className="flex items-center justify-between rounded-md border border-line bg-sunken/50 px-2.5 py-1">
+                  <span className="text-faint">{key.replace(/_/g, ' ')}</span>
+                  <span className={`flex items-center gap-1 text-[9px] font-bold ${isTrue ? 'text-ok' : 'text-faint'}`}>
+                    {isTrue ? <CheckCircle2 size={10} aria-hidden="true" /> : <Clock size={10} aria-hidden="true" />}
+                    {String(val).toUpperCase()}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {/* History timeline */}
+      {recovery.history.length > 0 && (
+        <div>
+          <span className="label mb-1">Transition History</span>
+          <ol className="space-y-0.5 font-mono text-[9.5px]">
+            {recovery.history.map((h, i) => (
+              <li key={i} className="flex items-center justify-between rounded border border-line/40 px-2 py-0.5 text-faint">
+                <span>{typeof h === 'string' ? h : h.state ?? h.action ?? JSON.stringify(h)}</span>
+                {h.timestamp && <span className="tabular-nums">{new Date(h.timestamp).toLocaleTimeString()}</span>}
+              </li>
+            ))}
+          </ol>
+        </div>
       )}
 
       {error && (
-        <p className="rounded-lg border border-bad/45 bg-bad/10 px-2 py-1 font-mono
-                      text-[10px] text-bad">{error}</p>
+        <p className="rounded-lg border border-bad/45 bg-bad/10 px-2 py-1 font-mono text-[10px] text-bad">{error}</p>
       )}
 
-      {/* Advance recovery — requires explicit confirmation */}
-      {recovery.can_advance && !confirming && (
-        <button onClick={() => setConfirming(true)} className="btn btn-sm"
-          aria-label="Advance recovery to next stage">
-          <RefreshCw size={11} aria-hidden="true" />
-          Advance recovery
-        </button>
-      )}
-
-      {confirming && (
-        <div className="flex items-center gap-2 rounded-xl border border-warn/45 bg-warn/10
-                        px-3 py-2">
+      {/* Advance / Initialize Actions */}
+      {!confirmingAction ? (
+        <div className="flex gap-2 pt-1">
+          <button
+            onClick={() => setConfirmingAction('advance')}
+            disabled={busy}
+            className="btn btn-sm"
+            aria-label="Advance recovery"
+          >
+            <RefreshCw size={11} aria-hidden="true" />
+            Advance recovery stage
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 rounded-xl border border-warn/45 bg-warn/10 px-3 py-2">
           <AlertTriangle size={13} className="shrink-0 text-warn" aria-hidden="true" />
           <p className="flex-1 text-[11px] text-warn">
-            This will advance the recovery process. Continue?
+            Submit recovery evidence to advance stage?
           </p>
           <div className="flex gap-1.5">
-            <button onClick={() => setConfirming(false)} disabled={busy}
-              className="btn btn-sm text-faint">Cancel</button>
-            <button onClick={advance} disabled={busy} className="btn btn-sm btn-primary">
-              {busy ? <Loader2 size={11} className="animate-spin" aria-hidden="true" />
-                    : <CheckCircle2 size={11} aria-hidden="true" />}
+            <button onClick={() => setConfirmingAction(null)} disabled={busy} className="btn btn-sm text-faint">
+              Cancel
+            </button>
+            <button onClick={handleAdvance} disabled={busy} className="btn btn-sm btn-primary">
+              {busy ? <Loader2 size={11} className="animate-spin" aria-hidden="true" /> : <CheckCircle2 size={11} aria-hidden="true" />}
               {busy ? 'Advancing…' : 'Confirm'}
             </button>
           </div>
@@ -125,3 +196,4 @@ export default function RecoveryPanel({ incidentId, raw, cfg }) {
     </div>
   );
 }
+

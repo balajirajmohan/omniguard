@@ -12,7 +12,7 @@ import IncidentDetail from './IncidentDetail.jsx';
  * shows an unobtrusive warning without breaking anything.
  */
 export default function IncidentCenter({
-  incidents, activeDetail, selectedId, onSelect, aiAvailable, error, cfg,
+  incidents, activeDetail, selectedId, onSelect, onRefresh, aiAvailable, error, cfg,
 }) {
   return (
     <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[380px_1fr]">
@@ -47,7 +47,7 @@ export default function IncidentCenter({
       </section>
 
       <section className="card flex min-h-0 flex-col p-3.5" aria-label="Incident detail">
-        <IncidentDetail incident={activeDetail} cfg={cfg} />
+        <IncidentDetail incident={activeDetail} cfg={cfg} onRefresh={onRefresh} />
       </section>
     </div>
   );
