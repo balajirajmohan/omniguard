@@ -187,12 +187,27 @@ def _explain_bedrock(event: dict) -> dict:
 
 
 def _explain_openai(event: dict) -> dict:
-    api_key = os.getenv("OPENAI_API_KEY")
+    """OpenAI Chat Completions — also used for OpenRouter (OpenAI-compatible)."""
+    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not configured")
+        raise RuntimeError("OPENAI_API_KEY or OPENROUTER_API_KEY not configured")
     from urllib import request
 
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    provider_label = os.getenv("LLM_PROVIDER", "openai").lower()
+    if provider_label == "openrouter":
+        # Hackathon OpenRouter — OmniGuard team default: Claude Sonnet 4.6
+        default_base = "https://openrouter.ai/api/v1"
+        default_model = "anthropic.claude-sonnet-4-6"
+        model = os.getenv("OPENROUTER_MODEL") or os.getenv("OPENAI_MODEL", default_model)
+        base = (
+            os.getenv("OPENROUTER_BASE_URL")
+            or os.getenv("OPENAI_BASE_URL")
+            or default_base
+        ).rstrip("/")
+    else:
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        base = (os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+
     started = time.perf_counter()
     body = {
         "model": model,
@@ -215,13 +230,20 @@ def _explain_openai(event: dict) -> dict:
             },
         ],
     }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    if provider_label == "openrouter" or "openrouter.ai" in base:
+        headers["HTTP-Referer"] = os.getenv(
+            "OPENROUTER_HTTP_REFERER", "https://github.com/omniguard"
+        )
+        headers["X-Title"] = os.getenv("OPENROUTER_APP_TITLE", "OmniGuard")
+
     req = request.Request(
-        "https://api.openai.com/v1/chat/completions",
+        f"{base}/chat/completions",
         data=json.dumps(body).encode(),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers=headers,
         method="POST",
     )
     with request.urlopen(req, timeout=30) as resp:
@@ -229,10 +251,10 @@ def _explain_openai(event: dict) -> dict:
     text = payload["choices"][0]["message"]["content"]
     parsed = _parse_llm_json(text)
     if not parsed:
-        raise ValueError("openai response was not valid JSON object")
+        raise ValueError("openai/openrouter response was not valid JSON object")
     return _normalize(
         parsed,
-        provider="openai",
+        provider="openrouter" if provider_label == "openrouter" else "openai",
         model=model,
         latency_ms=(time.perf_counter() - started) * 1000,
     )
@@ -294,7 +316,7 @@ def explain_incident(event: dict) -> dict:
     try:
         if provider == "bedrock":
             return _explain_bedrock(event)
-        if provider == "openai":
+        if provider in {"openai", "openrouter"}:
             return _explain_openai(event)
         if provider in {"anthropic", "claude"}:
             return _explain_anthropic(event)
@@ -312,6 +334,13 @@ def llm_status() -> dict:
     if provider == "bedrock":
         model = os.getenv("BEDROCK_MODEL_ID") or ""
         live = bool(model)
+    elif provider == "openrouter":
+        model = (
+            os.getenv("OPENROUTER_MODEL")
+            or os.getenv("OPENAI_MODEL")
+            or "anthropic.claude-sonnet-4-6"
+        )
+        live = bool(os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY"))
     elif provider == "openai":
         model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         live = bool(os.getenv("OPENAI_API_KEY"))
