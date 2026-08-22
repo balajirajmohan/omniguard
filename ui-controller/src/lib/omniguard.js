@@ -443,13 +443,14 @@ export function normalizeAiStatus(raw) {
       artifact_verified: null, policy_version: null, ai_mode: null,
     };
   }
+  const s = raw.command_anomaly ?? raw.action_window_anomaly ?? raw;
   return {
-    available: raw.available !== false,
-    model_version: str(raw.model_version),
-    degraded: bool(raw.degraded),
-    artifact_verified: bool(raw.artifact_verified),
-    policy_version: str(raw.policy_version),
-    ai_mode: str(raw.ai_mode),
+    available: s.available !== false,
+    model_version: str(s.model_version ?? raw.model_version),
+    degraded: bool(s.degraded ?? raw.degraded),
+    artifact_verified: bool(s.artifact_verified ?? raw.artifact_verified),
+    policy_version: str(s.policy_version ?? raw.policy_version),
+    ai_mode: str(s.ai_mode ?? raw.ai_mode),
   };
 }
 
@@ -473,13 +474,11 @@ export function classifyDecisionSource(event) {
     if (DECISION_SOURCES.includes(srcLower)) return srcLower;
     return rawSrc;
   }
-  if (event.hard_policy_would_block === true || event.ai_evidence?.hard_policy_would_block === true) {
+  const hpWouldBlock = bool(event.hard_policy?.would_block) ?? bool(event.hard_policy_would_block) ?? bool(event.ai_evidence?.hard_policy_would_block);
+  if (hpWouldBlock === true) {
     return "hard_policy";
   }
-  if (
-    (event.hard_policy_would_block === false || event.ai_evidence?.hard_policy_would_block === false) &&
-    event.final_decision !== "ALLOW"
-  ) {
+  if (hpWouldBlock === false && event.final_decision !== "ALLOW") {
     return "action_window_ai";
   }
   return null;
@@ -488,11 +487,17 @@ export function classifyDecisionSource(event) {
 export function normalizeDecisionIntelligence(event) {
   if (!event || typeof event !== "object") return null;
   const ev = event.ai_evidence ?? {};
+  const hp = event.hard_policy ?? ev.hard_policy ?? {};
+  const holdStop = ev.hold_stop ?? event.hold_stop ?? event;
+
+  const hpWouldBlock = bool(hp.would_block) ?? bool(ev.hard_policy_would_block) ?? bool(event.hard_policy_would_block);
+  const hpReasons = arr(hp.reasons ?? ev.hard_policy_reasons ?? event.hard_policy_reasons);
+
   return {
     decision_source: classifyDecisionSource(event),
     final_decision: str(event.final_decision),
-    hard_policy_would_block: bool(ev.hard_policy_would_block) ?? bool(event.hard_policy_would_block),
-    hard_policy_reasons: arr(ev.hard_policy_reasons ?? event.hard_policy_reasons),
+    hard_policy_would_block: hpWouldBlock,
+    hard_policy_reasons: hpReasons,
     anomaly_risk_score: num(ev.anomaly_risk_score) ?? num(event.anomaly_risk_score),
     behavioral_rule_score: num(ev.behavioral_rule_score) ?? num(event.behavioral_rule_score),
     effective_risk: num(ev.effective_risk) ?? num(event.effective_risk),
@@ -510,13 +515,13 @@ export function normalizeDecisionIntelligence(event) {
     model_degraded: bool(ev.model_degraded) ?? bool(event.model_degraded),
     policy_version: str(ev.policy_version) ?? str(event.policy_version),
 
-    /* Physical-stop truth fields */
-    stop_requested: bool(event.stop_requested),
-    stop_request_accepted: bool(event.stop_request_accepted),
-    stop_confirmed: bool(event.stop_confirmed),
-    robot_stopped: bool(event.stop_confirmed), // NEVER true unless stop_confirmed === true
-    stop_stage: str(event.stop_stage),
-    stop_ack: str(event.stop_ack),
+    /* Physical-stop truth fields from hold_stop */
+    stop_requested: bool(holdStop.stop_requested ?? event.stop_requested),
+    stop_request_accepted: bool(holdStop.stop_request_accepted ?? event.stop_request_accepted),
+    stop_confirmed: bool(holdStop.stop_confirmed ?? event.stop_confirmed),
+    robot_stopped: bool(holdStop.stop_confirmed ?? event.stop_confirmed), // NEVER true unless stop_confirmed === true
+    stop_stage: str(holdStop.stop_stage ?? event.stop_stage),
+    stop_ack: str(holdStop.stop_ack ?? event.stop_ack),
 
     /* Presentation flags derived from the normalized shape, not policy. */
     credential_status: str(event.credential_status),
@@ -602,8 +607,8 @@ export function normalizeAgentTrace(raw) {
   const rawSteps = arr(raw.tool_trace ?? raw.steps ?? raw.tool_calls);
   const steps = rawSteps.map((s) => ({
     tool: str(s.tool) ?? str(s.tool_name) ?? str(s.name),
-    timestamp: iso(s.timestamp ?? s.start_time ?? s.started_at),
-    start_time: iso(s.start_time ?? s.timestamp ?? s.started_at),
+    timestamp: iso(s.at ?? s.timestamp ?? s.start_time ?? s.started_at),
+    start_time: iso(s.start_time ?? s.at ?? s.timestamp ?? s.started_at),
     end_time: iso(s.end_time ?? s.completed_at),
     result: str(s.result ?? s.result_summary ?? s.summary),
     result_summary: str(s.result_summary ?? s.result ?? s.summary),
@@ -640,6 +645,10 @@ export function normalizeLlmProvenance(raw) {
   else if (raw.status === "failed" || raw.error) status = "failed";
   else if (fallback) status = "deterministic_fallback";
   else if (!raw.provider && !raw.model) status = "unavailable";
+
+  const whySusp = Array.isArray(raw.why_suspicious) ? raw.why_suspicious.join(', ') : str(raw.why_suspicious);
+  const contTaken = Array.isArray(raw.containment_taken) ? raw.containment_taken.join(', ') : str(raw.containment_taken);
+
   return {
     status,
     provider: str(raw.provider),
@@ -650,8 +659,8 @@ export function normalizeLlmProvenance(raw) {
     technical_summary: str(raw.technical_summary),
     physical_impact: str(raw.physical_impact),
     root_cause: str(raw.root_cause ?? raw.likely_root_cause),
-    why_suspicious: str(raw.why_suspicious),
-    containment_taken: str(raw.containment_taken),
+    why_suspicious: whySusp,
+    containment_taken: contTaken,
     recommended_actions: arr(raw.recommended_actions),
     generated_at: iso(raw.generated_at),
     latency_ms: num(raw.latency_ms ?? raw.latency),

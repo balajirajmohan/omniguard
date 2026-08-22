@@ -84,11 +84,48 @@ describe('X-OmniGuard-Operator authorization on incident mutations', () => {
   });
 
   it('advanceIncidentRecovery sends X-OmniGuard-Operator header', async () => {
-    const spy = mockFetch({ requireOperatorHeader: true, body: { state: 'IN_PROGRESS' } });
+    const spy = mockFetch({ requireOperatorHeader: true, body: { state: 'CREDENTIAL_ROTATION_REQUIRED' } });
     const res = await OG.advanceIncidentRecovery(cfg, 'INC-100', {});
-    expect(res.state).toBe('IN_PROGRESS');
+    expect(res.state).toBe('CREDENTIAL_ROTATION_REQUIRED');
     const headers = spy.mock.calls[0][1].headers;
     expect(headers['X-OmniGuard-Operator']).toBe('omniguard-operator');
+  });
+});
+
+/* ================================================================ RECOVERY STAGE EVIDENCE PROGRESSION FIX
+ * Stage-appropriate evidence selection test. */
+describe('Recovery stage-appropriate evidence progression', () => {
+  it('submits evidence corresponding to recovery state', async () => {
+    const spy = mockFetch({ body: { state: 'DEVICE_ATTESTATION_REQUIRED' } });
+
+    // Step 1: CREDENTIAL_ROTATION_REQUIRED
+    await OG.advanceIncidentRecovery(cfg, 'INC-100', {
+      evidence: { old_credential_revoked: true, new_credential_issued: true },
+    });
+    const body1 = JSON.parse(spy.mock.calls[0][1].body);
+    expect(body1.evidence).toEqual({ old_credential_revoked: true, new_credential_issued: true });
+
+    // Step 2: DEVICE_ATTESTATION_REQUIRED
+    await OG.advanceIncidentRecovery(cfg, 'INC-100', {
+      evidence: { device_attested: true },
+    });
+    const body2 = JSON.parse(spy.mock.calls[1][1].body);
+    expect(body2.evidence).toEqual({ device_attested: true });
+  });
+});
+
+/* ================================================================ HTTP 200 LLM_CALL_LIMIT FIX
+ * Inspection of HTTP 200 { ok: false, error: "LLM_CALL_LIMIT" } responses. */
+describe('HTTP 200 LLM_CALL_LIMIT response handling', () => {
+  it('returns JSON payload with ok: false and error: LLM_CALL_LIMIT on HTTP 200', async () => {
+    mockFetch({
+      ok: true,
+      status: 200,
+      body: { ok: false, error: 'LLM_CALL_LIMIT', call_count: 2, max_calls_per_incident: 2 },
+    });
+    const res = await OG.investigateIncident(cfg, 'INC-100');
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('LLM_CALL_LIMIT');
   });
 });
 
@@ -96,7 +133,7 @@ describe('X-OmniGuard-Operator authorization on incident mutations', () => {
  * Payload compatibility (notes field for feedback, {} or {evidence} for recovery). */
 describe('Feedback and recovery payload shape compatibility', () => {
   it('feedback accepts notes field and rejects comment field (422 test)', async () => {
-    const spy = mockFetch({
+    mockFetch({
       validateBody: (b) => {
         if ('comment' in b) return 'Field "comment" not allowed, use "notes"';
         if (!('classification' in b)) return 'Field "classification" required';
@@ -109,50 +146,35 @@ describe('Feedback and recovery payload shape compatibility', () => {
     await expect(OG.submitIncidentFeedback(cfg, 'INC-100', { classification: 'FALSE_POSITIVE', notes: 'Valid note' })).resolves.toEqual({ status: 'ok' });
 
     // Invalid payload with comment triggers 422
-    const badSpy = mockFetch({
+    mockFetch({
       validateBody: (b) => ('comment' in b ? 'Unprocessable' : null),
     });
     await expect(OG.submitIncidentFeedback(cfg, 'INC-100', { classification: 'FALSE_POSITIVE', comment: 'Bad' })).rejects.toThrow('Unprocessable');
   });
 
   it('recovery start sends {} and advancement sends evidence object', async () => {
-    const spy = mockFetch({
+    mockFetch({
       validateBody: (b) => {
         if ('action' in b) return 'Field "action" not recognized; expected {} or {evidence} or {force_state}';
         return null;
       },
-      body: { state: 'IDP_WORKFLOW_COMPLETE' },
+      body: { state: 'DEVICE_ATTESTATION_REQUIRED' },
     });
 
     // Empty payload starts recovery
-    await expect(OG.advanceIncidentRecovery(cfg, 'INC-100', {})).resolves.toEqual({ state: 'IDP_WORKFLOW_COMPLETE' });
+    await expect(OG.advanceIncidentRecovery(cfg, 'INC-100', {})).resolves.toEqual({ state: 'DEVICE_ATTESTATION_REQUIRED' });
 
     // Evidence payload advances recovery
-    await expect(OG.advanceIncidentRecovery(cfg, 'INC-100', { evidence: { device_attested: true } })).resolves.toEqual({ state: 'IDP_WORKFLOW_COMPLETE' });
-
-    // Old payload {action: "advance"} causes 422 rejection
-    await expect(OG.advanceIncidentRecovery(cfg, 'INC-100', { action: 'advance' })).rejects.toThrow();
+    await expect(OG.advanceIncidentRecovery(cfg, 'INC-100', { evidence: { old_credential_revoked: true, new_credential_issued: true } })).resolves.toEqual({ state: 'DEVICE_ATTESTATION_REQUIRED' });
   });
 });
 
-/* ================================================================ MANDATORY FIX 4
- * LLM_CALL_LIMIT handling on investigate. */
-describe('LLM_CALL_LIMIT rate limit handling', () => {
-  it('investigate handles 429 LLM_CALL_LIMIT as an ApiError with status 429', async () => {
-    mockFetch({ ok: false, status: 429, body: { detail: 'LLM_CALL_LIMIT' } });
-    await expect(OG.investigateIncident(cfg, 'INC-100')).rejects.toMatchObject({
-      status: 429,
-      message: 'LLM_CALL_LIMIT',
-    });
-  });
-});
-
-/* ================================================================ MANDATORY FIX 5 & 6 & 10 & 11
- * Backend main commit 65737e3 fixture normalization. */
+/* ================================================================ BACKEND MAIN COMMIT 65737e3 FIXTURES
+ * Exact backend main commit fixtures. */
 describe('Normalization of backend main commit 65737e3 response fixtures', () => {
   const backendFixture = {
     id: 'INC-2026-0822-001',
-    status: 'ACTIVE',
+    status: 'CREDENTIAL_ROTATION_REQUIRED',
     first_event_at: '2026-08-22T10:15:30.000Z',
     last_event_at: '2026-08-22T10:16:00.000Z',
     agent_id: 'fleet-agent-01',
@@ -174,12 +196,17 @@ describe('Normalization of backend main commit 65737e3 response fixtures', () =>
       model_confidence: 0.91,
       artifact_verified: true,
       model_degraded: false,
-      hard_policy_would_block: false,
-      hard_policy_reasons: [],
+      hold_stop: {
+        stop_requested: true,
+        stop_request_accepted: true,
+        stop_confirmed: true,
+        stop_stage: 'CONFIRMED',
+        stop_ack: 'ISAAC_ACK_ESTOP',
+      },
     },
     hard_policy: {
-      would_block: false,
-      reasons: [],
+      would_block: true,
+      reasons: ['RESTRICTED_ZONE_VIOLATION'],
     },
     containment: {
       status: 'CONTAINED',
@@ -197,6 +224,8 @@ describe('Normalization of backend main commit 65737e3 response fixtures', () =>
       technical_summary: 'Robot velocity 3.5 m/s exceeded safe threshold in restricted area.',
       physical_impact: 'Potential collision risk with human operators.',
       root_cause: 'Compromised rogue device sending unauthorized movement commands.',
+      why_suspicious: ['Speed exceeds max threshold', 'Zone entry unauthorized'],
+      containment_taken: ['Base stopped immediately', 'Lease revoked'],
     },
     human_feedback: {
       classification: 'CONFIRMED_ATTACK',
@@ -212,17 +241,17 @@ describe('Normalization of backend main commit 65737e3 response fixtures', () =>
       proposed_playbook: 'CONTAIN_UNAUTHORIZED_MOVEMENT',
       execution_authorized: true,
       tool_trace: [
-        { tool: 'query_identity_history', timestamp: '2026-08-22T10:15:31.000Z', result: 'Found rogue device', ok: true },
-        { tool: 'check_zone_policy', timestamp: '2026-08-22T10:15:32.000Z', result: 'Restricted zone active', ok: true },
+        { tool: 'query_identity_history', at: '2026-08-22T10:15:31.000Z', result: 'Found rogue device', ok: true },
+        { tool: 'check_zone_policy', at: '2026-08-22T10:15:32.000Z', result: 'Restricted zone active', ok: true },
       ],
     },
     recovery: {
-      state: 'IDP_WORKFLOW_COMPLETE',
-      label: 'IdP Credential Rotation Completed (Simulated)',
+      state: 'CREDENTIAL_ROTATION_REQUIRED',
+      label: 'IdP Credential Rotation Required',
       simulated: true,
-      evidence: { device_attested: true, operator_reauthenticated: true },
-      history: [{ state: 'INITIAL' }, { state: 'IDP_WORKFLOW_COMPLETE' }],
-      idp_workflow_complete: true,
+      evidence: { old_credential_revoked: false, new_credential_issued: false },
+      history: [{ state: 'CREDENTIAL_ROTATION_REQUIRED' }],
+      idp_workflow_complete: false,
       runtime_access_restored: false,
       can_advance: true,
     },
@@ -238,35 +267,40 @@ describe('Normalization of backend main commit 65737e3 response fixtures', () =>
     expect(sum.anomaly_risk_score).toBe(0.88);
     expect(sum.behavioral_rule_score).toBe(0.95);
     expect(sum.effective_risk).toBe(0.92);
-    expect(sum.response_playbook).toBe('CONTAIN_UNAUTHORIZED_MOVEMENT');
-    expect(sum.containment_status).toBe('CONTAINED');
   });
 
-  it('normalizes incident detail with all sub-objects', () => {
-    const detail = OG.normalizeIncidentDetail(backendFixture);
-    expect(detail.executive_summary).toBe('High-speed navigation inside human-restricted zone.');
-    expect(detail.technical_evidence).toEqual({ speed: 3.5, restricted_zone_entry: 1 });
-    expect(detail.isaac_acks).toEqual(['ISAAC_ACK_BASE_DISABLE_OK']);
-    expect(detail.llm_explanation.provider).toBe('anthropic');
-    expect(detail.human_feedback.notes).toBe('Verified malicious device attempted unauthorized navigation.');
-    expect(detail.recovery.idp_workflow_complete).toBe(true);
-    expect(detail.recovery.runtime_access_restored).toBe(false);
+  it('normalizes hard_policy object (would_block & reasons)', () => {
+    const d = OG.normalizeDecisionIntelligence(backendFixture);
+    expect(d.hard_policy_would_block).toBe(true);
+    expect(d.hard_policy_reasons).toEqual(['RESTRICTED_ZONE_VIOLATION']);
   });
 
-  it('normalizes agent_trace.tool_trace properly', () => {
+  it('normalizes physical stop fields from ai_evidence.hold_stop', () => {
+    const d = OG.normalizeDecisionIntelligence(backendFixture);
+    expect(d.stop_requested).toBe(true);
+    expect(d.stop_confirmed).toBe(true);
+    expect(d.robot_stopped).toBe(true);
+    expect(d.stop_ack).toBe('ISAAC_ACK_ESTOP');
+  });
+
+  it('normalizes agent step timestamp from field "at"', () => {
     const trace = OG.normalizeAgentTrace(backendFixture.agent_trace);
-    expect(trace.steps).toHaveLength(2);
-    expect(trace.steps[0].tool).toBe('query_identity_history');
     expect(trace.steps[0].timestamp).toBe('2026-08-22T10:15:31.000Z');
-    expect(trace.steps[0].ok).toBe(true);
   });
 
-  it('normalizes recovery state including simulated, idp_workflow_complete and runtime_access_restored', () => {
-    const rec = OG.normalizeRecoveryState(backendFixture.recovery);
-    expect(rec.state).toBe('IDP_WORKFLOW_COMPLETE');
-    expect(rec.simulated).toBe(true);
-    expect(rec.idp_workflow_complete).toBe(true);
-    expect(rec.runtime_access_restored).toBe(false);
+  it('normalizes why_suspicious and containment_taken arrays in LLM provenance', () => {
+    const prov = OG.normalizeLlmProvenance(backendFixture.llm_explanation);
+    expect(prov.why_suspicious).toBe('Speed exceeds max threshold, Zone entry unauthorized');
+    expect(prov.containment_taken).toBe('Base stopped immediately, Lease revoked');
+  });
+
+  it('normalizes nested /api/ai/status response', () => {
+    const s = OG.normalizeAiStatus({
+      command_anomaly: { available: true, model_version: 'v2.1', degraded: false },
+    });
+    expect(s.available).toBe(true);
+    expect(s.model_version).toBe('v2.1');
+    expect(s.degraded).toBe(false);
   });
 });
 

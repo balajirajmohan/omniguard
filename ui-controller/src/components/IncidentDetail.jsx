@@ -77,7 +77,12 @@ export default function IncidentDetail({ incident, cfg, onRefresh }) {
     setLlmLimitWarning(false);
     setConfirmInvestigate(false);
     try {
-      await investigateIncident(cfg, incident.incident_id);
+      const result = await investigateIncident(cfg, incident.incident_id);
+      if (result?.ok === false && result?.error === 'LLM_CALL_LIMIT') {
+        setLlmLimitWarning(true);
+        onRefresh?.();
+        return;
+      }
       onRefresh?.();
     } catch (err) {
       if (err.status === 429 || err.message?.includes('LLM_CALL_LIMIT') || err.body?.detail === 'LLM_CALL_LIMIT') {
@@ -144,7 +149,7 @@ export default function IncidentDetail({ incident, cfg, onRefresh }) {
         <div className="flex items-start gap-2.5 rounded-xl border border-warn/45 bg-warn/10 px-3 py-2" role="alert">
           <Info size={14} className="mt-0.5 shrink-0 text-warn" aria-hidden="true" />
           <p className="text-[11px] leading-relaxed text-warn">
-            <b>LLM call limit reached for this session.</b> Deterministic fallback retained.
+            <b>Investigation limit reached for this incident.</b> The existing investigation and deterministic fallback remain available.
           </p>
         </div>
       )}

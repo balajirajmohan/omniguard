@@ -2,6 +2,25 @@ import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock, Info, Loader2, Play, RefreshCw, ShieldAlert, ShieldCheck, XCircle } from 'lucide-react';
 import { advanceIncidentRecovery, normalizeRecoveryState } from '../lib/omniguard.js';
 
+const EVIDENCE_BY_STATE = {
+  CREDENTIAL_ROTATION_REQUIRED: {
+    old_credential_revoked: true,
+    new_credential_issued: true,
+  },
+  DEVICE_ATTESTATION_REQUIRED: {
+    device_attested: true,
+  },
+  OPERATOR_REAUTHENTICATION_REQUIRED: {
+    operator_reauthenticated: true,
+  },
+  LIMITED_ACCESS: {
+    related_incidents_closed: true,
+  },
+  ENHANCED_MONITORING: {
+    risk_below_recovery_threshold: true,
+  },
+};
+
 export default function RecoveryPanel({ incidentId, raw, cfg, onRefresh }) {
   const recovery = normalizeRecoveryState(raw);
   const [confirmingAction, setConfirmingAction] = useState(null); // 'start' | 'advance' | null
@@ -38,27 +57,18 @@ export default function RecoveryPanel({ incidentId, raw, cfg, onRefresh }) {
     );
   }
 
-  const handleStart = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await advanceIncidentRecovery(cfg, incidentId, {});
-      onRefresh?.();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-      setConfirmingAction(null);
-    }
-  };
+  const isRestored =
+    recovery.state === 'RESTORED' ||
+    recovery.state === 'FULL_ACCESS_RESTORED' ||
+    recovery.state === 'FULL_RESTORED' ||
+    recovery.runtime_access_restored;
 
   const handleAdvance = async () => {
     setBusy(true);
     setError(null);
     try {
-      await advanceIncidentRecovery(cfg, incidentId, {
-        evidence: { device_attested: true, operator_reauthenticated: true },
-      });
+      const evidence = EVIDENCE_BY_STATE[recovery.state] || { device_attested: true };
+      await advanceIncidentRecovery(cfg, incidentId, { evidence });
       onRefresh?.();
     } catch (err) {
       setError(err.message);
@@ -164,7 +174,7 @@ export default function RecoveryPanel({ incidentId, raw, cfg, onRefresh }) {
       )}
 
       {/* Advance / Initialize Actions */}
-      {!confirmingAction ? (
+      {!isRestored && (!confirmingAction ? (
         <div className="flex gap-2 pt-1">
           <button
             onClick={() => setConfirmingAction('advance')}
@@ -192,7 +202,7 @@ export default function RecoveryPanel({ incidentId, raw, cfg, onRefresh }) {
             </button>
           </div>
         </div>
-      )}
+      ))}
     </div>
   );
 }
