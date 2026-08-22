@@ -82,9 +82,10 @@ export default function DualSense({
   const [activePanel, setActivePanel] = useState(null);
   const [pressed, setPressed] = useState(null);
 
-  /* Arm and gripper ride a movement lease, so they act on whichever plane holds
-   * one. With no lease the backend path reports NO_ACTIVE_TELEOP_LEASE, which is
-   * more useful than an inert button. */
+  /* Arm presets ride whichever plane holds a lease (or is actively driving).
+   * With no lease yet, ensureLease() takes a short aux lease so the press still
+   * produces a real identity/policy verdict rather than an inert button.
+   * Gripper shoulders are plane-addressed (left = operator, right = hacker). */
   const target = (leases?.legit && 'legit') || (leases?.rogue && 'rogue')
     || (driving?.legit && 'legit') || (driving?.rogue && 'rogue')
     || activePanel || 'legit';

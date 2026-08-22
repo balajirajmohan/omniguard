@@ -783,8 +783,10 @@ export function useController(cfg) {
     [handleLeaseCommand, publishManipulator],
   );
 
-  /* The physical d-pad and shoulders drive whichever plane currently holds a
-   * lease; without one, handleLeaseCommand reports NO_ACTIVE_TELEOP_LEASE. */
+  /* Arm presets ride whichever plane holds a lease (or is actively driving).
+   * With no lease yet, ensureLease() takes a short aux lease via /api/teleop/start
+   * so the press still produces a real identity/policy verdict. Gripper shoulders
+   * are plane-addressed separately (left = operator, right = hacker). */
   const leaseOwner = useCallback(() => {
     for (const id of PANEL_IDS) if (sessions.current[id].controlId) return id;
     /* No lease: attribute the attempt to whoever is actually driving, so a

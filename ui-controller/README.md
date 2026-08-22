@@ -124,19 +124,22 @@ Every button is live on screen *and* on a physical pad (standard mapping):
 
 | Button | Command | Endpoint |
 |---|---|---|
-| D-pad ↑ / ↓ / ← / → | arm `reach` / `stow` / `carry` / `inspect` | `POST /api/teleop/arm/preset` |
-| L1 / R1 | gripper `open` / `close` | `POST /api/teleop/gripper` |
+| D-pad ↑ / ↓ / ← / → | arm `reach` / `stow` / `carry` / `inspect` (lease holder) | `POST /api/teleop/arm/preset` |
+| L1 / L2 | operator gripper `open` / `close` | `POST /api/teleop/gripper` |
+| R1 / R2 | hacker gripper `open` / `close` | `POST /api/teleop/gripper` |
 | Circle | emergency stop — ends every active lease | `POST /api/teleop/stop` |
 
 Preset and action names mirror the sets `backend/teleop.py` validates against;
 anything else returns `INVALID_ARM_PRESET` / `INVALID_GRIPPER_ACTION`. A test
 pins the button map to those sets so a rename cannot silently start failing.
 
-Arm and gripper commands ride the **movement lease**, so they act on whichever
-plane currently holds one — shown under the sticks. With no lease the request
-still goes through the normal path and reports `NO_ACTIVE_TELEOP_LEASE`, which is
-more useful than an inert button. A rejection tears the lease down exactly like a
-rejected movement packet.
+Arm presets ride whichever plane currently holds a **movement lease** (shown under
+the sticks). Gripper shoulders are always plane-addressed (left = operator, right
+= hacker). With no lease yet, the UI takes a short **aux lease** via
+`/api/teleop/start` at the robot's current pose so the press still produces a real
+identity/policy verdict — a hacker gripper press is blocked by the backend, not by
+an inert button. A rejection tears that lease down exactly like a rejected
+movement packet.
 
 Physical buttons fire on the rising edge only, so holding one does not stream
 commands.
@@ -161,6 +164,9 @@ Works over USB or Bluetooth. A DualSense reports `mapping: "standard"`, so:
 |---|---|
 | Left stick | Drives the **operator** plane |
 | Right stick | Drives the **rogue** plane |
+| L1 / L2 | Operator gripper open / close |
+| R1 / R2 | Hacker gripper open / close |
+| D-pad | Arm presets for the current lease holder |
 | Circle | Emergency stop — ends every active lease via `/api/teleop/stop` |
 
 Two things to know:
