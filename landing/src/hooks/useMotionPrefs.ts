@@ -18,7 +18,7 @@ export function useReducedMotion(): boolean {
   return reduced;
 }
 
-/** True once the page has scrolled past `threshold` — drives the nav backdrop. */
+/** True once the page has scrolled past `threshold`; drives the nav backdrop. */
 export function useScrolled(threshold = 12): boolean {
   const [scrolled, setScrolled] = useState(false);
 

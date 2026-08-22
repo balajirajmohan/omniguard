@@ -11,7 +11,7 @@ const stages = [
   {
     n: '02',
     title: 'Traditional IAM verifies the signature',
-    body: 'The token is well-formed and unexpired, so it passes. Nothing is wrong — cryptographically.',
+    body: 'The token is well-formed and unexpired, so it passes. Cryptographically, nothing is wrong.',
     tone: 'warn',
   },
   {

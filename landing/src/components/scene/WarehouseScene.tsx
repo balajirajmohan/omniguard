@@ -5,57 +5,79 @@ import { useReducedMotion } from '../../hooks/useMotionPrefs';
 import { Chip, Dot } from '../ui/Primitives';
 
 /**
- * Hero scene: one compromised command travelling from a controller, through the
- * OmniGuard gateway, into a warehouse digital twin — and being contained.
+ * Hero scene: approved and compromised commands alternate through the same
+ * gateway, showing both safe forwarding and deterministic containment.
  *
  * The loop is deliberately slow: it is an explanation, not decoration.
  */
 
-type Phase = 'idle' | 'transmit' | 'evaluate' | 'deny' | 'contain';
+type Scenario = 'approved' | 'denied';
+type Phase = 'idle' | 'transmit' | 'evaluate' | 'allow' | 'complete' | 'deny' | 'contain';
 
-const SEQUENCE: { phase: Phase; ms: number }[] = [
-  { phase: 'idle', ms: 1100 },
-  { phase: 'transmit', ms: 1700 },
-  { phase: 'evaluate', ms: 1500 },
-  { phase: 'deny', ms: 2200 },
-  { phase: 'contain', ms: 3000 },
+const SEQUENCE: { scenario: Scenario; phase: Phase; ms: number }[] = [
+  { scenario: 'approved', phase: 'idle', ms: 900 },
+  { scenario: 'approved', phase: 'transmit', ms: 1400 },
+  { scenario: 'approved', phase: 'evaluate', ms: 1200 },
+  { scenario: 'approved', phase: 'allow', ms: 1600 },
+  { scenario: 'approved', phase: 'complete', ms: 1900 },
+  { scenario: 'denied', phase: 'idle', ms: 900 },
+  { scenario: 'denied', phase: 'transmit', ms: 1400 },
+  { scenario: 'denied', phase: 'evaluate', ms: 1200 },
+  { scenario: 'denied', phase: 'deny', ms: 1900 },
+  { scenario: 'denied', phase: 'contain', ms: 2600 },
 ];
 
 const ROBOT = { x: 1.8, y: 5.8 };
-const ROUTE: [number, number][] = [
+const DENIED_ROUTE: [number, number][] = [
   [1.8, 5.8],
   [3.2, 5.1],
   [4.6, 5.5],
   [5.9, 6.0],
 ];
 
-const CONTAIN_STEPS = ['Credential revoked', 'Identity quarantined', 'Robot E-STOP engaged'];
+const APPROVED_ROUTE: [number, number][] = [
+  [1.8, 5.8],
+  [3.2, 4.8],
+  [4.7, 3.2],
+  [5.9, 1.8],
+];
 
-const DENY_REASONS = ['DEVICE_MISMATCH', 'ZONE_NOT_PERMITTED', 'BEHAVIOR_ANOMALY'];
+const CONTAIN_STEPS = ['Credential revoked', 'Identity quarantined', 'Robot base stop acknowledged'];
+
+const BLOCK_REASONS = ['UNKNOWN_DEVICE', 'RESTRICTED_DESTINATION', 'EXCESSIVE_SPEED'];
 
 export function WarehouseScene() {
   const reduced = useReducedMotion();
   const [step, setStep] = useState(0);
-  const phase: Phase = reduced ? 'contain' : SEQUENCE[step].phase;
+  const sequenceStep = reduced
+    ? { scenario: 'approved' as const, phase: 'complete' as const, ms: 0 }
+    : SEQUENCE[step];
+  const { scenario, phase } = sequenceStep;
 
   useEffect(() => {
     if (reduced) return;
     const t = window.setTimeout(
       () => setStep((s) => (s + 1) % SEQUENCE.length),
-      SEQUENCE[step].ms,
+      sequenceStep.ms,
     );
     return () => window.clearTimeout(t);
-  }, [step, reduced]);
+  }, [step, reduced, sequenceStep.ms]);
 
+  const approvedScenario = scenario === 'approved';
   const contained = phase === 'contain';
   const denied = phase === 'deny' || contained;
-  const routeActive = phase === 'transmit' || phase === 'evaluate';
+  const allowed = phase === 'allow' || phase === 'complete';
+  const decided = denied || allowed;
+  const routeActive = phase === 'transmit' || phase === 'evaluate' || allowed;
 
   const racksA = box(0.6, 3.55, 3.2, 4.15, 30);
   const racksB = box(4.8, 3.55, 7.4, 4.15, 30);
   const robotBody = box(ROBOT.x, ROBOT.y, ROBOT.x + 0.62, ROBOT.y + 0.62, 15);
 
-  const routePath = ROUTE.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${pt(x, y, 3)}`).join(' ');
+  const activeRoute = approvedScenario ? APPROVED_ROUTE : DENIED_ROUTE;
+  const routePath = activeRoute
+    .map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${pt(x, y, 3)}`)
+    .join(' ');
   const [humanX, humanY] = iso(6.5, 6.5, 6);
 
   return (
@@ -108,10 +130,10 @@ export function WarehouseScene() {
               y1="96"
               x2="566"
               y2="96"
-              stroke={denied ? '#ff5533' : '#22d3ee'}
-              strokeOpacity={denied ? 0.3 : 0.16}
+              stroke={allowed ? '#34d399' : '#2a3849'}
+              strokeOpacity={allowed ? 0.42 : 0.3}
               strokeWidth="1.25"
-              strokeDasharray={denied ? '2 6' : '4 5'}
+              strokeDasharray="4 5"
             />
 
             {/* Controller node */}
@@ -142,7 +164,7 @@ export function WarehouseScene() {
             />
             <circle cx="589" cy="96" r="4.5" fill={contained ? '#ff5533' : '#34d399'} />
 
-            {/* Gateway plane — the checkpoint every command crosses. */}
+            {/* Gateway plane: the checkpoint every command crosses. */}
             <polygon
               points="300,26 360,44 360,166 300,148"
               fill="url(#og-gate)"
@@ -172,13 +194,14 @@ export function WarehouseScene() {
               />
             )}
 
-            {/* Command packet — blocked at the gateway, never reaching the robot. */}
-            <AnimatePresence>
+            {/* Command packet: blocked at the gateway, never reaching the robot. */}
+            <AnimatePresence mode="wait">
               {phase !== 'idle' && (
                 <motion.g
+                  key={`${scenario}-command-packet`}
                   initial={{ x: 0, opacity: 0 }}
                   animate={{
-                    x: phase === 'transmit' ? 234 : 234,
+                    x: allowed ? 493 : 234,
                     opacity: contained ? 0 : 1,
                   }}
                   exit={{ opacity: 0 }}
@@ -252,7 +275,7 @@ export function WarehouseScene() {
             <path
               d={routePath}
               fill="none"
-              stroke={denied ? '#ff5533' : '#22d3ee'}
+              stroke={denied ? '#ff5533' : allowed ? '#34d399' : '#22d3ee'}
               strokeOpacity={denied ? 0.5 : 0.75}
               strokeWidth="2"
               strokeLinecap="round"
@@ -268,7 +291,7 @@ export function WarehouseScene() {
               cx={iso(5.9, 6.0, 3)[0]}
               cy={iso(5.9, 6.0, 3)[1]}
               r="4"
-              fill={denied ? '#ff5533' : '#22d3ee'}
+              fill={denied ? '#ff5533' : allowed ? '#34d399' : '#22d3ee'}
             />
 
             {/* Human silhouette */}
@@ -314,7 +337,7 @@ export function WarehouseScene() {
             </g>
           </g>
 
-          {/* Drifting particles — a faint sense of a live volume. */}
+          {/* Drifting particles create a faint sense of a live volume. */}
           {!reduced && (
             <g fill="#22d3ee" fillOpacity="0.3">
               {PARTICLES.map((p, i) => (
@@ -333,14 +356,14 @@ export function WarehouseScene() {
         </svg>
 
         {/* ---------- Readable HTML overlays ---------- */}
-        <SceneLabel className="left-[6%] top-[11%]">controller-01</SceneLabel>
+        <SceneLabel className="left-[6%] top-[11%]">CONTROL PLANE</SceneLabel>
         <SceneLabel className="right-[3%] top-[11%]" tone={contained ? 'deny' : 'neutral'}>
-          robot-01
+          ROBOT
         </SceneLabel>
         <SceneLabel className="left-[22%] top-[41%]">ZONE_A</SceneLabel>
         <SceneLabel className="right-[16%] top-[41%]">ZONE_B</SceneLabel>
         <SceneLabel className="right-[8%] bottom-[26%]" tone="deny">
-          HUMAN_ZONE
+          RESTRICTED_ZONE
         </SceneLabel>
 
         {/* Gateway caption */}
@@ -359,7 +382,7 @@ export function WarehouseScene() {
               className="pointer-events-none absolute left-1/2 top-[29%] -translate-x-1/2"
             >
               <span className="whitespace-nowrap rounded border border-cyan/40 bg-graphite/90 px-2.5 py-1.5 font-mono text-[10.5px] text-cyan-bright sm:text-[11.5px]">
-                MOVE → HUMAN_ZONE • 1.8 m/s
+                {approvedScenario ? 'MOVE → ZONE_B • 0.8 m/s' : 'MOVE → RESTRICTED_ZONE • 1.8 m/s'}
               </span>
             </motion.div>
           )}
@@ -367,28 +390,49 @@ export function WarehouseScene() {
 
         {/* Decision card */}
         <AnimatePresence>
-          {denied && (
+          {decided && (
             <motion.div
               initial={{ opacity: 0, y: 10, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, scale: 0.98 }}
               transition={{ duration: reduced ? 0 : 0.4, ease: [0.22, 1, 0.36, 1] }}
-              className="absolute left-1/2 top-[24%] w-[62%] max-w-[268px] -translate-x-1/2 rounded-lg border border-deny/55 bg-graphite/94 p-3.5 shadow-[0_20px_60px_-20px_rgba(255,85,51,0.5)] backdrop-blur-sm sm:w-[54%]"
+              className={`absolute left-1/2 top-[24%] w-[62%] max-w-[268px] -translate-x-1/2 rounded-lg border bg-graphite/94 p-3.5 backdrop-blur-sm sm:w-[54%] ${
+                denied
+                  ? 'border-deny/55 shadow-[0_20px_60px_-20px_rgba(255,85,51,0.5)]'
+                  : 'border-allow/55 shadow-[0_20px_60px_-20px_rgba(52,211,153,0.35)]'
+              }`}
             >
               <div className="flex items-center gap-2">
-                <Dot tone="deny" pulse={contained && !reduced} />
-                <span className="font-mono text-[13px] font-semibold tracking-[0.1em] text-deny">
-                  DENIED
+                <Dot tone={denied ? 'deny' : 'allow'} pulse={(contained || allowed) && !reduced} />
+                <span
+                  className={`font-mono text-[13px] font-semibold tracking-[0.1em] ${
+                    denied ? 'text-deny' : 'text-allow'
+                  }`}
+                >
+                  {denied ? 'DENIED' : 'APPROVED'}
                 </span>
-                <span className="ml-auto font-mono text-[10px] text-ink-faint">42 ms</span>
+                <span className="ml-auto font-mono text-[10px] text-ink-faint">
+                  {denied ? '42 ms' : '31 ms'}
+                </span>
               </div>
-              <ul className="mt-2.5 space-y-1">
-                {DENY_REASONS.map((r) => (
-                  <li key={r} className="font-mono text-[10.5px] leading-tight text-ink-dim">
-                    <span className="text-deny/80">—</span> {r}
-                  </li>
-                ))}
-              </ul>
+              {denied ? (
+                <ul className="mt-2.5 space-y-1">
+                  {BLOCK_REASONS.map((r) => (
+                    <li key={r} className="font-mono text-[10.5px] leading-tight text-ink-dim">
+                      <span className="text-deny/80">•</span> {r}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <ul className="mt-2.5 space-y-1">
+                  {['IDENTITY_VERIFIED', 'ZONE_PERMITTED', 'PATH_CLEAR'].map((reason) => (
+                    <li key={reason} className="flex items-center gap-1.5 font-mono text-[10.5px] text-ink-dim">
+                      <AllowCheckIcon />
+                      {reason}
+                    </li>
+                  ))}
+                </ul>
+              )}
               <AnimatePresence>
                 {contained && (
                   <motion.ul
@@ -420,25 +464,29 @@ export function WarehouseScene() {
 
       {/* ---------- Status rail ---------- */}
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Chip tone="cyan">Command intercepted in 42 ms</Chip>
-        <Chip>Policy v1.4</Chip>
-        <Chip tone={denied ? 'deny' : 'neutral'}>AI risk 0.96</Chip>
-        <Chip tone={contained ? 'deny' : 'neutral'}>
-          {contained ? 'Robot contained' : 'Robot active'}
+        <Chip tone={denied ? 'deny' : allowed ? 'allow' : 'cyan'}>
+          {denied ? 'Command denied in 42 ms' : allowed ? 'Command approved in 31 ms' : 'Evaluating command'}
+        </Chip>
+        <Chip>action-risk-policy-v1</Chip>
+        <Chip tone={denied ? 'deny' : allowed ? 'allow' : 'neutral'}>
+          AI risk {approvedScenario ? '0.08' : '0.96'}
+        </Chip>
+        <Chip tone={contained ? 'deny' : allowed ? 'allow' : 'neutral'}>
+          {contained ? 'Robot contained' : allowed ? 'Robot moving' : 'Robot active'}
         </Chip>
       </div>
       <p className="mt-2.5 font-mono text-[10.5px] leading-relaxed text-ink-faint">
-        Illustrative demo telemetry — values shown are from a scripted scenario.
+        Illustrative demo telemetry. Values shown are from a scripted scenario.
       </p>
     </div>
   );
 }
 
 const SCENE_DESCRIPTION =
-  'Isometric warehouse digital twin. A command from controller-01 requesting robot-01 to move ' +
-  'into HUMAN_ZONE at 1.8 metres per second is intercepted at the OmniGuard gateway and denied ' +
-  'for device mismatch, zone not permitted and behaviour anomaly. The credential is revoked, the ' +
-  'identity quarantined, and the robot emergency-stopped.';
+  'Animated isometric warehouse digital twin showing commands from the control plane to the robot, ' +
+  'alternating between an approved move to ZONE_B and ' +
+  'a blocked move into RESTRICTED_ZONE. Every command is evaluated by the OmniGuard gateway before the ' +
+  'robot moves; unsafe commands trigger credential revocation, quarantine and emergency stop.';
 
 const PARTICLES = [
   { x: 150, y: 300, r: 1.2, d: 7, delay: 0 },
@@ -481,6 +529,20 @@ function CheckIcon() {
       <path
         d="M2 6.4 4.7 9 10 3.2"
         stroke="#ff5533"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function AllowCheckIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+      <path
+        d="M2 6.4 4.7 9 10 3.2"
+        stroke="#34d399"
         strokeWidth="1.7"
         strokeLinecap="round"
         strokeLinejoin="round"

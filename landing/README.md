@@ -9,7 +9,7 @@ React 19 · TypeScript · Vite · Tailwind CSS v4 · Framer Motion
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
+npm run dev      # http://localhost:5174
 npm run build    # typecheck + production bundle to dist/
 npm run preview
 ```
@@ -33,17 +33,20 @@ Set an API base to switch the UI from "Interactive product preview" to live labe
 
 ```bash
 cp .env.example .env.local
-# VITE_OMNIGUARD_API_BASE=https://omniguard.internal/api
+# VITE_OMNIGUARD_API_BASE=https://omniguard.internal
+# VITE_OMNIGUARD_CONSOLE_URL=http://localhost:5173
 ```
 
 Expected endpoints:
 
 - `GET /health` — broker, model, simulator, audit-chain readiness (top status rail)
-- `POST /command` — submit a command, receive a decision trace (Decision Lab, console)
-- `GET /incidents` — containment history (incident timeline)
+- `POST /api/commands` — submit a command and receive a decision trace
+- `GET /api/incidents` — durable containment history
+- `GET /api/scenarios` — available backend scenarios
+- `GET /api/state` — current system and robot state
 
 To stream real decisions, replace the timer inside `src/components/decision/useScenarioRun.ts`
-with the `POST /command` response. Every consumer reads the same `revealed` / `settled` /
+with the `POST /api/commands` response. Every consumer reads the same `revealed` / `settled` /
 `complete` contract, so no UI changes are needed.
 
 ## Structure

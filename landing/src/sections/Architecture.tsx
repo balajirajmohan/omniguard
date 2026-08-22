@@ -15,10 +15,11 @@ const chain = [
 
 const feedback = [
   'Position and velocity',
-  'Force/torque telemetry',
-  'Nearby humans and zones',
+  'Command and containment telemetry',
+  'Configured destinations and zones',
   'Robot state',
   'Incident outcomes',
+  'Stored for investigation, evaluation and human-approved model improvement',
 ];
 
 const deployment = [
@@ -44,7 +45,7 @@ export function Architecture() {
       <Reveal>
         <SectionHeading
           eyebrow="ARCHITECTURE"
-          title="Designed for the command path—not bolted onto the dashboard."
+          title="Designed for the command path, not bolted onto the dashboard."
           body="OmniGuard sits inline. Every instruction that could move a machine passes through the same enforcement gateway, and every physical consequence flows back as evidence."
         />
       </Reveal>
