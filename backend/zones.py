@@ -5,7 +5,7 @@ Boundary rules (tested):
   - Rectangles are inclusive on all edges.
   - RESTRICTED_ZONE is evaluated first and wins on any overlap.
   - Among safe zones, SAFE_ZONE_A is checked before SAFE_ZONE_B
-    (shared edge x=5 belongs to SAFE_ZONE_A).
+    (shared edge x=4 belongs to SAFE_ZONE_A).
   - Points outside all rectangles are OUT_OF_BOUNDS (treated as restricted).
 """
 
@@ -14,9 +14,21 @@ from __future__ import annotations
 from typing import Any
 
 TELEOP_ZONES: dict[str, dict[str, float]] = {
-    "SAFE_ZONE_A": {"x_min": -5.0, "x_max": 5.0, "y_min": -5.0, "y_max": 5.0},
-    "SAFE_ZONE_B": {"x_min": 5.0, "x_max": 15.0, "y_min": -5.0, "y_max": 5.0},
-    "RESTRICTED_ZONE": {"x_min": 2.0, "x_max": 12.0, "y_min": 5.0, "y_max": 12.0},
+    # Shifted into the Simple Warehouse's open floor footprint. Keeping these
+    # rectangles below the back-wall line prevents the translucent overlays from
+    # appearing embedded in the wall geometry in Isaac Sim.
+    "SAFE_ZONE_A": {"x_min": -4.0, "x_max": 4.0, "y_min": -4.0, "y_max": 2.0},
+    "SAFE_ZONE_B": {"x_min": 4.0, "x_max": 12.0, "y_min": -4.0, "y_max": 2.0},
+    "RESTRICTED_ZONE": {"x_min": 2.0, "x_max": 10.0, "y_min": 2.5, "y_max": 7.5},
+}
+
+ZONE_WAYPOINTS: dict[str, tuple[float, float]] = {
+    "SAFE_ZONE_A": (0.0, -1.0),
+    "SAFE_ZONE_B": (8.0, -1.0),
+    "ZONE_A": (0.0, -1.0),
+    "ZONE_B": (8.0, -1.0),
+    "RESTRICTED_ZONE": (6.0, 5.0),
+    "HUMAN_ZONE": (6.0, 5.0),
 }
 
 ALLOWED_TELEOP_ZONES = ("SAFE_ZONE_A", "SAFE_ZONE_B")
@@ -66,6 +78,6 @@ def teleop_config_payload(*, robot_id: str = "robot-01") -> dict[str, Any]:
             "inclusive": True,
             "restricted_priority": True,
             "safe_zone_order": list(ALLOWED_TELEOP_ZONES),
-            "shared_edge_x5": "SAFE_ZONE_A",
+            "shared_edge_x4": "SAFE_ZONE_A",
         },
     }

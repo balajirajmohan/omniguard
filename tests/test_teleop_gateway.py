@@ -45,11 +45,11 @@ def test_teleop_config_zones_and_boundaries():
     assert cfg["deadman_timeout_ms"] == 750
     assert "SAFE_ZONE_A" in cfg["zones"]
     assert "RESTRICTED_ZONE" in cfg["zones"]
-    assert classify_point(6.0, 8.0) == "RESTRICTED_ZONE"
-    assert classify_point(5.0, 0.0) == "SAFE_ZONE_A"
-    assert classify_point(5.01, 0.0) == "SAFE_ZONE_B"
-    assert classify_point(0.0, 5.1) == "OUT_OF_BOUNDS"
-    assert classify_point(2.0, 5.0) == "RESTRICTED_ZONE"
+    assert classify_point(6.0, 5.0) == "RESTRICTED_ZONE"
+    assert classify_point(4.0, 0.0) == "SAFE_ZONE_A"
+    assert classify_point(4.01, 0.0) == "SAFE_ZONE_B"
+    assert classify_point(0.0, 2.1) == "OUT_OF_BOUNDS"
+    assert classify_point(2.0, 2.5) == "RESTRICTED_ZONE"
 
 
 def test_legitimate_start_issues_shadow_lease_even_if_risk_elevated():
@@ -71,11 +71,11 @@ def test_rogue_device_blocked_no_lease():
 
 
 def test_restricted_and_out_of_bounds_blocked():
-    restricted = _start(x=6.0, y=8.0).json()
+    restricted = _start(x=6.0, y=5.0).json()
     assert restricted["final_decision"] == "BLOCK"
     assert "RESTRICTED_DESTINATION" in restricted["reasons"]
     client.post("/api/reset")
-    oob = _start(x=16.0, y=0.0).json()
+    oob = _start(x=13.0, y=0.0).json()
     assert oob["final_decision"] == "BLOCK"
     assert "RESTRICTED_DESTINATION" in oob["reasons"]
 
@@ -107,15 +107,15 @@ def test_safe_move_reaches_bridge_adapter(monkeypatch):
             "control_id": start["control_id"],
             "sequence": 1,
             "robot_id": "robot-01",
-            "x": 4.2,
-            "y": 2.7,
+            "x": 3.2,
+            "y": 1.7,
             "speed": 0.8,
         },
     ).json()
     assert move["status"] in {"QUEUED", "EXECUTED"}
     assert move["command_id"] == "bridge-cmd-1"
     assert move["zone"] == "SAFE_ZONE_A"
-    assert calls and calls[0][1:] == (4.2, 2.7, 0.8)
+    assert calls and calls[0][1:] == (3.2, 1.7, 0.8)
 
 
 def test_bridge_failure_surfaced(monkeypatch):

@@ -91,9 +91,9 @@ export const FALLBACK_TELEOP_CONFIG = {
   deadman_timeout_ms: 750,
   lease_ttl_seconds: 30,
   zones: {
-    SAFE_ZONE_A: {x_min: -5, x_max: 5, y_min: -5, y_max: 5},
-    SAFE_ZONE_B: {x_min: 5, x_max: 15, y_min: -5, y_max: 5},
-    RESTRICTED_ZONE: {x_min: 2, x_max: 12, y_min: 5, y_max: 12},
+    SAFE_ZONE_A: {x_min: -4, x_max: 4, y_min: -4, y_max: 2},
+    SAFE_ZONE_B: {x_min: 4, x_max: 12, y_min: -4, y_max: 2},
+    RESTRICTED_ZONE: {x_min: 2, x_max: 10, y_min: 2.5, y_max: 7.5},
   },
 };
 
@@ -122,6 +122,18 @@ export function zoneAt(x, y, zones) {
   const hit = entries.filter(inside);
   if (!hit.length) return "OUT_OF_BOUNDS";
   return (hit.find(([n]) => isRestrictedZone(n)) ?? hit[0])[0]; // restricted wins
+}
+
+/** Centre waypoint for autonomous duties. The backend still classifies every
+ * coordinate; this helper only chooses a point safely inside the advertised
+ * rectangle and never supplies a trusted zone name to a movement request. */
+export function zoneCenter(zones, name) {
+  const rect = zones?.[name];
+  if (!rect) return null;
+  return {
+    x: (rect.x_min + rect.x_max) / 2,
+    y: (rect.y_min + rect.y_max) / 2,
+  };
 }
 
 export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));

@@ -33,7 +33,7 @@ simulation_app = SimulationApp({"headless": False})
 # omniverse/kit modules aren't available until the app object initializes them.
 import carb  # noqa: E402
 import numpy as np  # noqa: E402
-from backend.zones import TELEOP_ZONES  # noqa: E402
+from backend.zones import TELEOP_ZONES, ZONE_WAYPOINTS  # noqa: E402
 from isaacsim.core.api import World  # noqa: E402
 from isaacsim.core.utils.stage import add_reference_to_stage  # noqa: E402
 from isaacsim.storage.native import get_assets_root_path  # noqa: E402
@@ -47,16 +47,6 @@ from mobile_manipulator import (  # noqa: E402
 from zone_visuals import add_zone_visuals  # noqa: E402
 
 ROBOT_ID = "robot-01"
-
-# Zones used by backend/actuation.py and the four-button demo.
-ZONE_WAYPOINTS = {
-    "SAFE_ZONE_A": (0.0, 0.0),
-    "SAFE_ZONE_B": (10.0, 4.0),
-    "ZONE_A": (0.0, 0.0),
-    "ZONE_B": (10.0, 4.0),
-    "RESTRICTED_ZONE": (6.0, 8.0),
-    "HUMAN_ZONE": (6.0, 8.0),
-}
 
 MAX_STEP_SPEED = 2.0  # m/s safety cap regardless of what a command requests
 FOLLOW_CAMERA_PATH = "/World/OmniGuardFollowCamera"
