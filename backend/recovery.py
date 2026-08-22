@@ -39,6 +39,8 @@ class RecoveryManager:
             "evidence": {k: False for k in REQUIRED_FOR_RESTORE},
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "history": ["CONTAINED", "CREDENTIAL_ROTATION_REQUIRED"],
+            "idp_workflow_complete": False,
+            "runtime_access_restored": False,
         }
         incident_store.update_fields(
             incident_id, status="RECOVERING", recovery_json=recovery
@@ -70,6 +72,15 @@ class RecoveryManager:
         if force_state:
             if force_state not in RECOVERY_STATES:
                 return {"ok": False, "error": "INVALID_STATE"}
+            if force_state == "RESTORED" and not all(
+                evidence.get(k) for k in REQUIRED_FOR_RESTORE
+            ):
+                return {
+                    "ok": False,
+                    "error": "MISSING_RECOVERY_EVIDENCE",
+                    "required": sorted(REQUIRED_FOR_RESTORE),
+                    "evidence": evidence,
+                }
             recovery["state"] = force_state
         else:
             recovery["state"] = self._next_state(evidence, recovery.get("state"))
@@ -79,22 +90,24 @@ class RecoveryManager:
             history.append(recovery["state"])
         recovery["history"] = history
         recovery["updated_at"] = datetime.now(timezone.utc).isoformat()
+        # IdP workflow completion is not the same as restoring runtime access.
+        recovery["idp_workflow_complete"] = recovery["state"] == "RESTORED"
+        recovery["runtime_access_restored"] = False
 
         status = "RESOLVED" if recovery["state"] == "RESTORED" else "RECOVERING"
-        if recovery["state"] == "RESTORED" and not all(
-            evidence.get(k) for k in REQUIRED_FOR_RESTORE
-        ):
-            return {
-                "ok": False,
-                "error": "MISSING_RECOVERY_EVIDENCE",
-                "required": sorted(REQUIRED_FOR_RESTORE),
-                "evidence": evidence,
-            }
-
         incident_store.update_fields(
             incident_id, status=status, recovery_json=recovery
         )
-        return {"ok": True, "incident_id": incident_id, "recovery": recovery}
+        return {
+            "ok": True,
+            "incident_id": incident_id,
+            "recovery": recovery,
+            "note": (
+                "RESTORED means the simulated IdP workflow finished. "
+                "Runtime credential/agent/robot state remains unchanged until "
+                "an explicit operator restore or Reset Demo."
+            ),
+        }
 
     def _next_state(self, evidence: dict[str, bool], current: str | None) -> str:
         if not evidence.get("old_credential_revoked") or not evidence.get(

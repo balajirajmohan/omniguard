@@ -85,7 +85,8 @@ def _fallback(event: dict, *, reason: str = "deterministic_template") -> dict:
             ),
             "likely_root_cause": (
                 "Action-window behavioural anomaly"
-                if event.get("decision_source") == "action_window_ai"
+                if event.get("decision_source")
+                in {"action_window_ai", "behavioral_rule", "hybrid_rule_ml", "ai_warning"}
                 else "Hard-policy or identity violation"
             ),
         }

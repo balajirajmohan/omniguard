@@ -236,6 +236,11 @@ def _update_mock_pose(
             bridge["speed"] = 0.0
             bridge["motion_state"] = "STOPPED"
             bridge["target"] = None
+            STATE["robot_speed"] = 0.0
+            if STATE["robot_status"] not in {"CONTAINED", "CONTAINMENT_FAILED"}:
+                STATE["robot_status"] = "STOPPED"
+            if command_id:
+                bridge["last_command_id"] = command_id
             return
         if not keep_position:
             bridge["position"] = {"x": float(x), "y": float(y), "z": 0.0}
@@ -285,7 +290,9 @@ def reset_state() -> dict[str, Any]:
     # path uses, and two concurrent requests can deadlock the whole API.
     teleop_manager.reset()
     action_history.reset_demo_state()
-    incident_store.reset_demo_state()
+    # Durable incidents are preserved across Reset Demo so investigation evidence
+    # survives a judge demo cycle. Use an explicit purge endpoint/operator action
+    # if wiping the SQLite store is required.
     with _LOCK:
         STATE.clear()
         STATE.update(initial_state())
@@ -898,6 +905,25 @@ def investigate_incident(
     incident = incident_store.get(incident_id)
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
+
+    max_calls = int((risk_policy.raw.get("llm") or {}).get("max_calls_per_incident", 2))
+    prior_explain = incident.get("llm_explanation") or {}
+    prior_trace = incident.get("agent_trace") or {}
+    call_count = int(prior_explain.get("call_count") or 0)
+    if call_count == 0 and prior_trace:
+        # Legacy investigations without an explicit counter still count as one call.
+        call_count = 1
+    if call_count >= max_calls:
+        return {
+            "incident_id": incident_id,
+            "investigation": prior_trace or None,
+            "explanation": prior_explain or None,
+            "ok": False,
+            "error": "LLM_CALL_LIMIT",
+            "max_calls_per_incident": max_calls,
+            "call_count": call_count,
+        }
+
     agent = InvestigationAgent(public_state)
     result = agent.run_v2(incident)
     incident_store.update_fields(
@@ -919,11 +945,16 @@ def investigate_incident(
             "response_playbook": incident.get("playbook"),
         }
     )
+    explanation = dict(explanation or {})
+    explanation["call_count"] = call_count + 1
     incident_store.update_fields(incident_id, llm_explanation_json=explanation)
     return {
         "incident_id": incident_id,
         "investigation": result,
         "explanation": explanation,
+        "ok": True,
+        "call_count": explanation["call_count"],
+        "max_calls_per_incident": max_calls,
     }
 
 
@@ -1044,11 +1075,24 @@ def _run_malicious_manipulation_scenario() -> dict[str, Any]:
         (
             s
             for s in steps
-            if s["result"].get("status") == "REJECTED"
-            or s["result"].get("final_decision") == "BLOCK"
+            if s["result"].get("final_decision") == "BLOCK"
+            or (
+                s["result"].get("status") == "REJECTED"
+                and "AI_BLOCK" in (s["result"].get("reasons") or [])
+            )
         ),
-        steps[-1],
+        None,
     )
+    if blocked is None:
+        blocked = next(
+            (
+                s
+                for s in steps
+                if s["result"].get("status") in {"REJECTED", "PAUSED_FOR_REVIEW"}
+                and s["result"].get("final_decision") in {"BLOCK", "HOLD"}
+            ),
+            steps[-1],
+        )
     incidents = incident_store.list(limit=1)
     return {
         "scenario": "valid_identity_malicious_manipulation",
@@ -1061,6 +1105,8 @@ def _run_malicious_manipulation_scenario() -> dict[str, Any]:
         "decision_source": blocked["result"].get("decision_source"),
         "hard_policy_would_block": blocked["result"].get("hard_policy_would_block", False),
         "anomaly_risk_score": blocked["result"].get("anomaly_risk_score"),
+        "behavioral_rule_score": blocked["result"].get("behavioral_rule_score"),
+        "effective_risk": blocked["result"].get("effective_risk"),
         "caught_by": blocked["result"].get("caught_by"),
         "response_playbook": blocked["result"].get("response_playbook"),
         "incident_id": blocked["result"].get("incident_id")
@@ -1068,7 +1114,13 @@ def _run_malicious_manipulation_scenario() -> dict[str, Any]:
         "steps": steps,
         "policy_decision": blocked["result"].get("policy_decision"),
         "reasons": blocked["result"].get("reasons") or [],
+        "containment": (incidents[0].get("containment") if incidents else None),
         "actions": (incidents[0].get("containment") or {}).get("acknowledged", [])
+        if incidents
+        else [],
+        "unverified_actions": (incidents[0].get("containment") or {}).get(
+            "unverified", []
+        )
         if incidents
         else [],
     }

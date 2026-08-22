@@ -143,12 +143,17 @@ class InvestigationAgent:
                 evidence.append({"tool": name, "result": result.get("result")})
 
         playbook = incident.get("playbook") or "UNSAFE_MANIPULATION_SEQUENCE"
-        hypothesis = (
-            "Valid identity issued an individually-legal but collectively abnormal "
-            "base/arm/gripper sequence."
-            if incident.get("decision_source") == "action_window_ai"
-            else "Hard-policy or identity violation produced a containment event."
-        )
+        src = incident.get("decision_source")
+        if src in {"action_window_ai", "behavioral_rule", "hybrid_rule_ml", "ai_warning"}:
+            hypothesis = (
+                "Valid identity issued an individually-legal but collectively abnormal "
+                "base/arm/gripper sequence "
+                f"(decision_source={src})."
+            )
+        else:
+            hypothesis = (
+                "Hard-policy or identity violation produced a containment event."
+            )
         return {
             "agent": "omniguard-investigation-v2",
             "mode": "deterministic_fallback",

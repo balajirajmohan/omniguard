@@ -18,21 +18,36 @@
   ],
   "trained_on": "synthetic_normal_action_windows_only",
   "dataset_label": "synthetic",
-  "n_training_samples": 4000,
+  "n_training_samples": 3200,
+  "n_heldout_normal_samples": 800,
   "n_eval_samples": 48,
   "contamination": 0.04,
   "random_state": 21,
-  "trained_at": "2026-08-22T04:56:02.039278+00:00",
+  "trained_at": "2026-08-22T05:16:42.306604+00:00",
+  "threshold_method": "heldout_normal_quantiles_with_operational_floors",
+  "warning_quantile": 0.95,
+  "critical_quantile": 0.99,
+  "quantile_warning_raw": 0.4,
+  "quantile_critical_raw": 0.44,
+  "operational_warning_floor": 0.6,
+  "operational_critical_floor": 0.8,
   "critical_risk_threshold": 0.8,
   "warning_risk_threshold": 0.6,
-  "model_sha256": "6d2154ab38e9fc72495c243a73ee9a0d06e64496d3ac71acd60e31000be5bddd",
+  "heldout_normal_risk_summary": {
+    "min": 0.15,
+    "p50": 0.25,
+    "p95": 0.4,
+    "p99": 0.44,
+    "max": 0.51
+  },
+  "model_sha256": "c7eb34da84fff8bd9281097ba0a4a2c187864610eb4329e69547578af1d34416",
   "dependency_versions": {
     "python": "3.12.4",
     "numpy": "2.5.2",
     "scikit_learn": "1.9.0",
     "joblib": "1.5.3"
   },
-  "eval_metrics": {
+  "eval_metrics_ml_only": {
     "precision": 0.0,
     "recall": 0.0,
     "false_positive_rate": 0.0,
@@ -40,345 +55,509 @@
     "fp": 0,
     "tn": 40,
     "fn": 8,
-    "note": "Eval includes valid-identity malicious manipulation windows. Not production validation."
+    "note": "IsolationForest alone against eval labels. Does not include the deterministic behavioral rule."
+  },
+  "eval_metrics_production_pipeline": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "false_positive_rate": 0.0,
+    "tp": 8,
+    "fp": 0,
+    "tn": 40,
+    "fn": 0,
+    "note": "Production decision uses effective_risk = max(ml, behavioral_rule). Not live Isaac/GPU validation."
+  },
+  "eval_metrics": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "false_positive_rate": 0.0,
+    "tp": 8,
+    "fp": 0,
+    "tn": 40,
+    "fn": 0,
+    "note": "Alias of eval_metrics_production_pipeline for backward compatibility."
   },
   "eval_results": [
     {
       "scenario": "eval_normal_0",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.22,
-      "raw_score": 0.10545664337453042
+      "ml_risk": 0.22,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.22,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.11073241854814836
     },
     {
       "scenario": "eval_normal_1",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.23,
-      "raw_score": 0.09917719423935456
+      "ml_risk": 0.23,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.23,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.0982131087057696
     },
     {
       "scenario": "eval_normal_2",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.2,
-      "raw_score": 0.12122037998511592
+      "ml_risk": 0.21,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.21,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.11878746445745264
     },
     {
       "scenario": "eval_normal_3",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.19,
-      "raw_score": 0.12874454702268257
+      "ml_risk": 0.2,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.2,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.1197304414552054
     },
     {
       "scenario": "eval_normal_4",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.25,
-      "raw_score": 0.08460879262938936
+      "ml_risk": 0.27,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.27,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.07424359014462467
     },
     {
       "scenario": "eval_normal_5",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.34,
-      "raw_score": 0.03280588693875364
+      "ml_risk": 0.35,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.35,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.029284917048466697
     },
     {
       "scenario": "eval_normal_6",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.25,
-      "raw_score": 0.08925234674869764
+      "ml_risk": 0.25,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.25,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.08830381477032745
     },
     {
       "scenario": "eval_normal_7",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.25,
-      "raw_score": 0.08415492713590234
+      "ml_risk": 0.26,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.26,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.08299814960548668
     },
     {
       "scenario": "eval_normal_8",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.3,
-      "raw_score": 0.05690373550244254
+      "ml_risk": 0.33,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.33,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.03780895707461884
     },
     {
       "scenario": "eval_normal_9",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.4,
-      "raw_score": -0.0014980022417609984
+      "ml_risk": 0.39,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.39,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.007669159938885839
     },
     {
       "scenario": "eval_normal_10",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.24,
-      "raw_score": 0.09284292595165866
+      "ml_risk": 0.24,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.24,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.09323898691960275
     },
     {
       "scenario": "eval_normal_11",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.29,
-      "raw_score": 0.06424678744040246
+      "ml_risk": 0.28,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.28,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.0682537144392864
     },
     {
       "scenario": "eval_normal_12",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.24,
-      "raw_score": 0.09686409728699952
+      "ml_risk": 0.24,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.24,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.0951473146979761
     },
     {
       "scenario": "eval_normal_13",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.26,
-      "raw_score": 0.07841433127735109
+      "ml_risk": 0.25,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.25,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.08452494582123227
     },
     {
       "scenario": "eval_normal_14",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.31,
-      "raw_score": 0.051415817928168406
+      "ml_risk": 0.32,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.32,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.04208293362715698
     },
     {
       "scenario": "eval_normal_15",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.2,
-      "raw_score": 0.12488270791777273
+      "ml_risk": 0.2,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.2,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.12275588008587673
     },
     {
       "scenario": "eval_normal_16",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.25,
-      "raw_score": 0.08718766698448788
+      "ml_risk": 0.26,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.26,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.0836465578081872
     },
     {
       "scenario": "eval_normal_17",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.29,
-      "raw_score": 0.06144024517794622
+      "ml_risk": 0.29,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.29,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.06424817487963397
     },
     {
       "scenario": "eval_normal_18",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.25,
-      "raw_score": 0.08419918389025516
+      "ml_risk": 0.25,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.25,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.08827690933021504
     },
     {
       "scenario": "eval_normal_19",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.23,
-      "raw_score": 0.09862727402146954
+      "ml_risk": 0.23,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.23,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.10123028793296729
     },
     {
       "scenario": "eval_normal_20",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.31,
-      "raw_score": 0.047338635051515254
+      "ml_risk": 0.33,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.33,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.03820417467223258
     },
     {
       "scenario": "eval_normal_21",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.29,
-      "raw_score": 0.05987602273395376
+      "ml_risk": 0.29,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.29,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.0628414597268403
     },
     {
       "scenario": "eval_normal_22",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.27,
-      "raw_score": 0.07605869962196399
+      "ml_risk": 0.26,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.26,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.08372968674705261
     },
     {
       "scenario": "eval_normal_23",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.37,
-      "raw_score": 0.016209484655725026
+      "ml_risk": 0.35,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.35,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.028297991669380296
     },
     {
       "scenario": "eval_normal_24",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.39,
-      "raw_score": 0.0057632129290267065
+      "ml_risk": 0.43,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.43,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": -0.013829409612835963
     },
     {
       "scenario": "eval_normal_25",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.32,
-      "raw_score": 0.044542250411097384
+      "ml_risk": 0.31,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.31,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.04865223868637636
     },
     {
       "scenario": "eval_normal_26",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.3,
-      "raw_score": 0.053708386568059874
+      "ml_risk": 0.28,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.28,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.06651571590910466
     },
     {
       "scenario": "eval_normal_27",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.34,
-      "raw_score": 0.031690358949914454
+      "ml_risk": 0.37,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.37,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.01799613685394097
     },
     {
       "scenario": "eval_normal_28",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.3,
-      "raw_score": 0.05443367667524901
+      "ml_risk": 0.29,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.29,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.06305905241415422
     },
     {
       "scenario": "eval_normal_29",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.27,
-      "raw_score": 0.07639717228661835
+      "ml_risk": 0.28,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.28,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.06877483585632516
     },
     {
       "scenario": "eval_normal_30",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.21,
-      "raw_score": 0.11730275438314852
+      "ml_risk": 0.2,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.2,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.12270849708718407
     },
     {
       "scenario": "eval_normal_31",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.18,
-      "raw_score": 0.13963113613127698
+      "ml_risk": 0.18,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.18,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.14364236798877694
     },
     {
       "scenario": "eval_normal_32",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.22,
-      "raw_score": 0.11015035141732238
+      "ml_risk": 0.23,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.23,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.1044655929091669
     },
     {
       "scenario": "eval_normal_33",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.22,
-      "raw_score": 0.1101758545754074
+      "ml_risk": 0.22,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.22,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.11154715356250372
     },
     {
       "scenario": "eval_normal_34",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.24,
-      "raw_score": 0.09142561309366304
+      "ml_risk": 0.22,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.22,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.1058520086248178
     },
     {
       "scenario": "eval_normal_35",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.24,
-      "raw_score": 0.09304639362101874
+      "ml_risk": 0.23,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.23,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.10059765361600326
     },
     {
       "scenario": "eval_normal_36",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.22,
-      "raw_score": 0.11100377855870686
+      "ml_risk": 0.22,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.22,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.11043438903616865
     },
     {
       "scenario": "eval_normal_37",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.34,
-      "raw_score": 0.03282081027060613
+      "ml_risk": 0.32,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.32,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.043347309219718855
     },
     {
       "scenario": "eval_normal_38",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.37,
-      "raw_score": 0.015053645094634582
+      "ml_risk": 0.34,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.34,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.03089104053727043
     },
     {
       "scenario": "eval_normal_39",
       "label": 0,
-      "predicted_anomaly": false,
-      "risk": 0.26,
-      "raw_score": 0.07840760501807298
+      "ml_risk": 0.26,
+      "behavioral_rule_score": 0.0,
+      "effective_risk": 0.26,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": false,
+      "raw_score": 0.07994949667823426
     },
     {
       "scenario": "malicious_manip_0",
       "label": 1,
-      "predicted_anomaly": false,
-      "risk": 0.42,
-      "raw_score": -0.00914125793264009
+      "ml_risk": 0.42,
+      "behavioral_rule_score": 0.92,
+      "effective_risk": 0.92,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": true,
+      "raw_score": -0.011349811692648704
     },
     {
       "scenario": "malicious_manip_1",
       "label": 1,
-      "predicted_anomaly": false,
-      "risk": 0.43,
-      "raw_score": -0.01561898930479455
+      "ml_risk": 0.43,
+      "behavioral_rule_score": 0.92,
+      "effective_risk": 0.92,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": true,
+      "raw_score": -0.015200313199563498
     },
     {
       "scenario": "malicious_manip_2",
       "label": 1,
-      "predicted_anomaly": false,
-      "risk": 0.47,
-      "raw_score": -0.03403536665810292
+      "ml_risk": 0.48,
+      "behavioral_rule_score": 0.92,
+      "effective_risk": 0.92,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": true,
+      "raw_score": -0.03818132372241845
     },
     {
       "scenario": "malicious_manip_3",
       "label": 1,
-      "predicted_anomaly": false,
-      "risk": 0.5,
-      "raw_score": -0.05228143771803773
+      "ml_risk": 0.52,
+      "behavioral_rule_score": 0.92,
+      "effective_risk": 0.92,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": true,
+      "raw_score": -0.05992318065469926
     },
     {
       "scenario": "malicious_manip_4",
       "label": 1,
-      "predicted_anomaly": false,
-      "risk": 0.48,
-      "raw_score": -0.039989572100537774
+      "ml_risk": 0.48,
+      "behavioral_rule_score": 0.92,
+      "effective_risk": 0.92,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": true,
+      "raw_score": -0.041876779528128405
     },
     {
       "scenario": "malicious_manip_5",
       "label": 1,
-      "predicted_anomaly": false,
-      "risk": 0.45,
-      "raw_score": -0.026698664857393806
+      "ml_risk": 0.46,
+      "behavioral_rule_score": 0.92,
+      "effective_risk": 0.92,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": true,
+      "raw_score": -0.02788770130186813
     },
     {
       "scenario": "malicious_manip_6",
       "label": 1,
-      "predicted_anomaly": false,
-      "risk": 0.47,
-      "raw_score": -0.037240652843858246
+      "ml_risk": 0.5,
+      "behavioral_rule_score": 0.92,
+      "effective_risk": 0.92,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": true,
+      "raw_score": -0.04991810917441819
     },
     {
       "scenario": "malicious_manip_7",
       "label": 1,
-      "predicted_anomaly": false,
-      "risk": 0.47,
-      "raw_score": -0.035839785515843436
+      "ml_risk": 0.48,
+      "behavioral_rule_score": 0.92,
+      "effective_risk": 0.92,
+      "predicted_anomaly_ml": false,
+      "predicted_anomaly_hybrid": true,
+      "raw_score": -0.04183607972495351
     }
   ],
-  "judge_note": "anomaly_risk_score is an IsolationForest anomaly score, not an attack probability. model_confidence is null (uncalibrated)."
+  "judge_note": "anomaly_risk_score is IsolationForest-only (not attack probability). behavioral_rule_score is a separate deterministic burst rule. effective_risk drives HOLD/BLOCK. model_confidence is null (uncalibrated)."
 }

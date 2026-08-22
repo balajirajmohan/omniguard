@@ -168,8 +168,14 @@ class ActionWindowAnomalyDetector:
             self.load_error = str(exc)
 
     def score(self, features: dict[str, Any]) -> tuple[float, dict[str, Any], dict[str, Any]]:
+        """Return (anomaly_risk_score, features, info).
+
+        anomaly_risk_score is the IsolationForest score only — never blended with
+        the behavioral rule. Callers that need both for decisions must read
+        behavioral_rule_score / effective_risk from info.
+        """
         selected = {name: features.get(name) for name in self.feature_names}
-        info = {
+        info: dict[str, Any] = {
             "model_name": "IsolationForest",
             "model_version": self.model_version,
             "available": self.available,
@@ -177,27 +183,30 @@ class ActionWindowAnomalyDetector:
             "artifact_verified": self.artifact_verified,
             "load_error": self.load_error,
             "ai_unavailable": not self.available,
+            "behavioral_rule_score": 0.0,
+            "effective_risk": 0.0,
         }
         if not self.available or self._model is None:
+            rule = self.behavioral_rule_score(selected)
+            info["behavioral_rule_score"] = rule
+            info["effective_risk"] = rule
             return 0.0, selected, info
         vector = self._vector(selected)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             raw = float(self._model.decision_function(vector)[0])
-        risk = risk_from_raw(raw)
-        # Transparent feature gate for the evaluated manipulation profile.
-        # IsolationForest alone under-separates dense continuous windows; this
-        # boost only fires on arm+gripper+switch bursts present in eval data.
-        boost = self._manipulation_burst_boost(selected)
-        if boost > risk:
-            info["manipulation_burst_boost"] = boost
-            risk = boost
+        ml_risk = risk_from_raw(raw)
+        rule = self.behavioral_rule_score(selected)
         info["raw_score"] = raw
-        info["ai_anomalous"] = risk >= self.critical_threshold
-        return risk, selected, info
+        info["behavioral_rule_score"] = rule
+        info["effective_risk"] = max(ml_risk, rule)
+        info["ai_anomalous"] = ml_risk >= self.critical_threshold
+        info["rule_triggered"] = rule >= self.critical_threshold
+        return ml_risk, selected, info
 
     @staticmethod
-    def _manipulation_burst_boost(features: dict[str, Any]) -> float:
+    def behavioral_rule_score(features: dict[str, Any]) -> float:
+        """Deterministic manipulation-burst rule — separate from ML score."""
         arm = float(features.get("arm_count_10s") or 0)
         grip = float(features.get("gripper_count_10s") or 0)
         switches = float(features.get("action_switch_count_10s") or 0)
@@ -220,7 +229,11 @@ class ActionWindowAnomalyDetector:
             "feature_names": self.feature_names,
             "critical_threshold": self.critical_threshold,
             "warning_threshold": self.warning_threshold,
-            "note": "anomaly_risk_score is an IsolationForest anomaly score, not an attack probability",
+            "note": (
+                "anomaly_risk_score is IsolationForest-only (not attack probability). "
+                "behavioral_rule_score is a separate deterministic burst rule. "
+                "effective_risk = max(ml, rule) for enforcement decisions."
+            ),
         }
 
 

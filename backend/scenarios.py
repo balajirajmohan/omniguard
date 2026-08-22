@@ -154,7 +154,8 @@ SCENARIOS: list[dict[str, Any]] = [
         "title": "Valid identity malicious manipulation",
         "description": (
             "Known device and valid credential issue individually legal "
-            "base/arm/gripper actions that form an abnormal manipulation window."
+            "base/arm/gripper actions that form an abnormal manipulation window. "
+            "Blocked by a hybrid ML-plus-behavioral-rule action-window engine."
         ),
         "agent_id": "fleet-agent-01",
         "device_id": KNOWN_DEVICE,

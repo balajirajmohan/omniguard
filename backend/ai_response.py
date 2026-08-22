@@ -33,6 +33,11 @@ class AIResponseEngine:
         self.containment = ContainmentExecutor(
             apply_identity_containment=apply_identity_containment,
             terminate_session=terminate_session,
+            manipulator_telemetry=lambda: (
+                (state_provider() or {}).get("isaac_bridge_state")
+                or (state_provider() or {}).get("mock_bridge_state")
+                or {}
+            ),
         )
         # Keep module singleton in sync for tests/imports.
         import backend.containment as containment_mod
@@ -106,6 +111,8 @@ class AIResponseEngine:
                 },
                 ai_evidence={
                     "anomaly_risk_score": decision.anomaly_risk_score,
+                    "behavioral_rule_score": decision.behavioral_rule_score,
+                    "effective_risk": decision.effective_risk,
                     "anomaly_features": decision.anomaly_features,
                     "decision_source": decision.decision_source,
                     "ai_mode": decision.ai_mode,

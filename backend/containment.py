@@ -1,4 +1,9 @@
-"""Allowlisted deterministic containment — LLMs never call this directly."""
+"""Allowlisted deterministic containment — LLMs never call this directly.
+
+Physical truth: the authenticated Isaac bridge /stop clears queued motion and
+stops the base. It does NOT prove arm halt or a safe gripper pose. Those remain
+REQUESTED/UNVERIFIED until explicit telemetry confirms them.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +15,7 @@ from backend.actuation import ActuationResult, maybe_actuate_stop
 
 ALLOWED_OPERATIONS = {
     "REJECT_COMMAND",
+    "ROBOT_ESTOP_REQUESTED",
     "STOP_BASE",
     "STOP_ARM",
     "SAFE_GRIPPER",
@@ -19,27 +25,37 @@ ALLOWED_OPERATIONS = {
     "QUARANTINE_AGENT",
 }
 
+# Operations that a generic /stop can honestly satisfy when the bridge accepts it.
+ESTOP_PROVES = {"ROBOT_ESTOP_REQUESTED", "STOP_BASE"}
+# Require explicit manipulator telemetry before these can be acknowledged.
+NEEDS_TELEMETRY = {"STOP_ARM", "SAFE_GRIPPER"}
+
 PLAYBOOKS: dict[str, list[str]] = {
     "SINGLE_UNSAFE_COMMAND": [
         "REJECT_COMMAND",
+        "ROBOT_ESTOP_REQUESTED",
         "STOP_BASE",
         "REVOKE_CREDENTIAL",
         "QUARANTINE_AGENT",
     ],
     "SUSPICIOUS_SESSION": [
         "REJECT_COMMAND",
+        "ROBOT_ESTOP_REQUESTED",
         "TERMINATE_SESSION",
     ],
     "CREDENTIAL_COMPROMISE": [
         "REJECT_COMMAND",
+        "ROBOT_ESTOP_REQUESTED",
         "STOP_BASE",
         "STOP_ARM",
+        "SAFE_GRIPPER",
         "REVOKE_CREDENTIAL",
         "QUARANTINE_AGENT",
         "QUARANTINE_DEVICE",
     ],
     "ROGUE_DEVICE": [
         "REJECT_COMMAND",
+        "ROBOT_ESTOP_REQUESTED",
         "STOP_BASE",
         "REVOKE_CREDENTIAL",
         "QUARANTINE_DEVICE",
@@ -47,6 +63,7 @@ PLAYBOOKS: dict[str, list[str]] = {
     ],
     "UNSAFE_MANIPULATION_SEQUENCE": [
         "REJECT_COMMAND",
+        "ROBOT_ESTOP_REQUESTED",
         "STOP_BASE",
         "STOP_ARM",
         "SAFE_GRIPPER",
@@ -56,6 +73,7 @@ PLAYBOOKS: dict[str, list[str]] = {
     ],
     "CRITICAL_PHYSICAL_RISK": [
         "REJECT_COMMAND",
+        "ROBOT_ESTOP_REQUESTED",
         "STOP_BASE",
         "STOP_ARM",
         "REVOKE_CREDENTIAL",
@@ -70,10 +88,12 @@ class ContainmentExecutor:
         *,
         apply_identity_containment: Callable[[str, list[str]], None] | None = None,
         terminate_session: Callable[[str], None] | None = None,
+        manipulator_telemetry: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self._lock = threading.RLock()
         self._apply_identity = apply_identity_containment
         self._terminate_session = terminate_session
+        self._manipulator_telemetry = manipulator_telemetry
         self.last_result: dict[str, Any] | None = None
 
     def execute(
@@ -94,6 +114,7 @@ class ContainmentExecutor:
                 "requested": [],
                 "attempted": [],
                 "acknowledged": [],
+                "unverified": [],
                 "failed": ["UNKNOWN_PLAYBOOK"],
             }
         for op in ops:
@@ -105,12 +126,14 @@ class ContainmentExecutor:
                     "requested": ops,
                     "attempted": [],
                     "acknowledged": [],
+                    "unverified": [],
                     "failed": [op],
                 }
 
         requested = list(ops)
         attempted: list[str] = []
         acknowledged: list[str] = []
+        unverified: list[str] = []
         failed: list[str] = []
         bridge_acks: list[dict[str, Any]] = []
 
@@ -136,26 +159,44 @@ class ContainmentExecutor:
                 except Exception as exc:  # noqa: BLE001
                     failed.append(f"SESSION:{exc}")
 
-            physical = [o for o in ops if o in {"STOP_BASE", "STOP_ARM", "SAFE_GRIPPER"}]
-            if physical or "REJECT_COMMAND" in ops:
-                if "REJECT_COMMAND" in ops:
-                    attempted.append("REJECT_COMMAND")
-                    acknowledged.append("REJECT_COMMAND")
-                for op in physical:
-                    attempted.append(op)
-                # Single authenticated E-stop covers base; arm/gripper halt via stop.
+            if "REJECT_COMMAND" in ops:
+                attempted.append("REJECT_COMMAND")
+                acknowledged.append("REJECT_COMMAND")
+
+            needs_estop = bool(set(ops) & (ESTOP_PROVES | NEEDS_TELEMETRY))
+            if needs_estop:
+                for op in ops:
+                    if op in ESTOP_PROVES or op in NEEDS_TELEMETRY:
+                        if op not in attempted:
+                            attempted.append(op)
                 actuation = maybe_actuate_stop(robot_id)
                 ack = self._ack_from_actuation(actuation)
                 bridge_acks.append(ack)
-                if ack.get("stage") in {"EXECUTED", "QUEUED"} or actuation is None:
-                    # mock path: None means local stop requested
-                    for op in physical:
-                        acknowledged.append(op)
-                    if actuation is None:
-                        acknowledged.append("STOP_QUEUED_FOR_SIMULATOR")
+                estop_ok = ack.get("stage") in {"EXECUTED", "QUEUED", "MOCK_SKIPPED"} and ack.get(
+                    "ok", True
+                )
+                if estop_ok:
+                    # Honest claim: we requested an authenticated robot E-stop and
+                    # the bridge accepted/queued it (or mock skipped). That proves
+                    # base stop intent — not arm/gripper safe state.
+                    if "ROBOT_ESTOP_REQUESTED" in ops:
+                        acknowledged.append("ROBOT_ESTOP_REQUESTED")
+                    elif "STOP_BASE" in ops:
+                        acknowledged.append("ROBOT_ESTOP_REQUESTED")
+                    if "STOP_BASE" in ops:
+                        acknowledged.append("STOP_BASE")
+                    for op in NEEDS_TELEMETRY:
+                        if op not in ops:
+                            continue
+                        if self._telemetry_confirms(op):
+                            acknowledged.append(op)
+                        else:
+                            unverified.append(op)
                 else:
-                    for op in physical:
-                        failed.append(op)
+                    failed.append("ROBOT_ESTOP_REQUESTED")
+                    for op in ops:
+                        if op in ESTOP_PROVES or op in NEEDS_TELEMETRY:
+                            failed.append(op)
 
         result = {
             "ok": not failed,
@@ -167,21 +208,47 @@ class ContainmentExecutor:
             "requested": requested,
             "attempted": attempted,
             "acknowledged": acknowledged,
+            "unverified": unverified,
             "failed": failed,
             "bridge_acknowledgements": bridge_acks,
+            "note": (
+                "ROBOT_ESTOP_REQUESTED/STOP_BASE reflect authenticated /stop. "
+                "STOP_ARM and SAFE_GRIPPER stay UNVERIFIED without manipulator telemetry."
+            ),
             "at": datetime.now(timezone.utc).isoformat(),
         }
         self.last_result = result
         return result
 
+    def _telemetry_confirms(self, op: str) -> bool:
+        if self._manipulator_telemetry is None:
+            return False
+        try:
+            state = self._manipulator_telemetry() or {}
+        except Exception:  # noqa: BLE001
+            return False
+        if op == "STOP_ARM":
+            arm = state.get("arm") or {}
+            return arm.get("motion_state") in {"STOPPED", "IDLE", "STOWED"}
+        if op == "SAFE_GRIPPER":
+            grip = state.get("gripper") or {}
+            return grip.get("action") in {"open", "safe"} or grip.get("safe") is True
+        return False
+
     def _ack_from_actuation(self, actuation: ActuationResult | None) -> dict[str, Any]:
         if actuation is None:
-            return {"stage": "MOCK_SKIPPED", "command_id": None, "ok": True}
+            return {
+                "stage": "MOCK_SKIPPED",
+                "command_id": None,
+                "ok": True,
+                "proves": sorted(ESTOP_PROVES),
+            }
         return {
             "stage": actuation.stage,
             "command_id": actuation.command_id,
             "ok": actuation.ok,
             "detail": actuation.detail,
+            "proves": sorted(ESTOP_PROVES),
         }
 
 

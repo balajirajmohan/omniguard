@@ -27,7 +27,9 @@ class DecisionResult(BaseModel):
     hard_policy_would_block: bool
     hard_policy_reasons: list[str] = Field(default_factory=list)
 
-    anomaly_risk_score: float | None = None
+    anomaly_risk_score: float | None = None  # IsolationForest only
+    behavioral_rule_score: float | None = None  # separate deterministic rule
+    effective_risk: float | None = None  # max(ml, rule) used for thresholds
     anomaly_model: str | None = None
     anomaly_model_version: str | None = None
     anomaly_features: dict[str, Any] = Field(default_factory=dict)
@@ -37,8 +39,21 @@ class DecisionResult(BaseModel):
     requires_incident: bool = False
     requires_containment: bool = False
     requires_human_review: bool = False
+    requires_pause_stop: bool = False  # HOLD must stop motion without revoking
     response_playbook: str | None = None
     ai_degraded: bool = False
+
+
+def _source_for(*, ml_hit: bool, rule_hit: bool, warning: bool = False) -> str:
+    if ml_hit and rule_hit:
+        return "hybrid_rule_ml"
+    if rule_hit:
+        return "behavioral_rule"
+    if ml_hit:
+        return "action_window_ai"
+    if warning:
+        return "ai_warning"
+    return "none"
 
 
 class DecisionOrchestrator:
@@ -81,10 +96,15 @@ class DecisionOrchestrator:
 
         ai_mode = risk_policy.ai_mode_for(context.action_type.value)
         features = window_features or {}
-        risk, selected, info = action_window_detector.score(features)
+        ml_risk, selected, info = action_window_detector.score(features)
+        rule_risk = float(info.get("behavioral_rule_score") or 0.0)
+        effective = float(info.get("effective_risk") or max(ml_risk, rule_risk))
         degraded = bool(info.get("degraded") or info.get("ai_unavailable"))
 
-        if not action_window_detector.available:
+        warning = action_window_detector.warning_threshold
+        critical = action_window_detector.critical_threshold
+
+        if not action_window_detector.available and rule_risk <= 0:
             return DecisionResult(
                 final_decision="ALLOW",
                 policy_decision="PERMIT",
@@ -92,6 +112,8 @@ class DecisionOrchestrator:
                 hard_policy_would_block=False,
                 hard_policy_reasons=[],
                 anomaly_risk_score=0.0,
+                behavioral_rule_score=0.0,
+                effective_risk=0.0,
                 anomaly_model="IsolationForest",
                 anomaly_model_version=action_window_detector.model_version,
                 anomaly_features=selected,
@@ -100,13 +122,12 @@ class DecisionOrchestrator:
                 ai_degraded=True,
             )
 
-        warning = risk_policy.warning_risk
-        critical = risk_policy.critical_risk
-        # Prefer artifact thresholds when verified.
-        warning = min(warning, action_window_detector.warning_threshold)
-        critical = max(critical, action_window_detector.critical_threshold)
-        warning = action_window_detector.warning_threshold
-        critical = action_window_detector.critical_threshold
+        ml_critical = ml_risk >= critical
+        rule_critical = rule_risk >= critical
+        ml_warning = ml_risk >= warning
+        rule_warning = rule_risk >= warning
+        effective_critical = effective >= critical
+        effective_warning = effective >= warning
 
         base = DecisionResult(
             final_decision="ALLOW",
@@ -114,7 +135,9 @@ class DecisionOrchestrator:
             decision_source="none",
             hard_policy_would_block=False,
             hard_policy_reasons=[],
-            anomaly_risk_score=risk,
+            anomaly_risk_score=ml_risk,
+            behavioral_rule_score=rule_risk,
+            effective_risk=effective,
             anomaly_model="IsolationForest",
             anomaly_model_version=str(info.get("model_version")),
             anomaly_features=selected,
@@ -124,30 +147,42 @@ class DecisionOrchestrator:
         )
 
         if ai_mode == "observe":
-            base.decision_source = "action_window_ai" if risk >= warning else "none"
-            if risk >= critical:
+            if effective_warning:
+                base.decision_source = _source_for(
+                    ml_hit=ml_critical or ml_warning,
+                    rule_hit=rule_critical or rule_warning,
+                )
+            if effective_critical:
                 base.requires_human_review = True
             return base
 
         if ai_mode == "advise":
-            if risk >= critical or risk >= warning:
+            if effective_critical or effective_warning:
                 base.final_decision = "HOLD"
                 base.policy_decision = "AI_ADVISE_HOLD"
-                base.decision_source = "ai_warning"
+                base.decision_source = _source_for(
+                    ml_hit=ml_critical or ml_warning,
+                    rule_hit=rule_critical or rule_warning,
+                    warning=True,
+                )
                 base.requires_human_review = True
-                base.requires_incident = risk >= critical
+                base.requires_incident = effective_critical
+                base.requires_pause_stop = True
+                base.response_playbook = "SUSPICIOUS_SESSION"
             return base
 
         # enforce
-        if risk >= critical:
+        if effective_critical:
             playbook = self._playbook_for(context, features)
             return DecisionResult(
                 final_decision="BLOCK",
                 policy_decision="AI_DENY",
-                decision_source="action_window_ai",
+                decision_source=_source_for(ml_hit=ml_critical, rule_hit=rule_critical),
                 hard_policy_would_block=False,
                 hard_policy_reasons=[],
-                anomaly_risk_score=risk,
+                anomaly_risk_score=ml_risk,
+                behavioral_rule_score=rule_risk,
+                effective_risk=effective,
                 anomaly_model="IsolationForest",
                 anomaly_model_version=str(info.get("model_version")),
                 anomaly_features=selected,
@@ -159,14 +194,18 @@ class DecisionOrchestrator:
                 response_playbook=playbook,
                 ai_degraded=degraded,
             )
-        if risk >= warning:
+        if effective_warning:
             return DecisionResult(
                 final_decision="HOLD",
                 policy_decision="AI_HOLD",
-                decision_source="ai_warning",
+                decision_source=_source_for(
+                    ml_hit=ml_warning, rule_hit=rule_warning, warning=True
+                ),
                 hard_policy_would_block=False,
                 hard_policy_reasons=[],
-                anomaly_risk_score=risk,
+                anomaly_risk_score=ml_risk,
+                behavioral_rule_score=rule_risk,
+                effective_risk=effective,
                 anomaly_model="IsolationForest",
                 anomaly_model_version=str(info.get("model_version")),
                 anomaly_features=selected,
@@ -174,6 +213,7 @@ class DecisionOrchestrator:
                 model_confidence=None,
                 requires_incident=True,
                 requires_containment=False,
+                requires_pause_stop=True,
                 requires_human_review=True,
                 response_playbook="SUSPICIOUS_SESSION",
                 ai_degraded=degraded,
