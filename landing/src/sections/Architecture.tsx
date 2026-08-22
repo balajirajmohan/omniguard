@@ -15,11 +15,10 @@ const chain = [
 
 const feedback = [
   'Position and velocity',
-  'Command and containment telemetry',
-  'Configured destinations and zones',
+  'Force/torque telemetry',
+  'Nearby humans and zones',
   'Robot state',
   'Incident outcomes',
-  'Stored for investigation, evaluation and human-approved model improvement',
 ];
 
 const deployment = [

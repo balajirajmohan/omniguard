@@ -6,7 +6,7 @@ import { useReducedMotion } from '../../hooks/useMotionPrefs';
 const outcomeTone: Record<Outcome, Tone> = {
   ALLOW: 'allow',
   ALLOW_CONSTRAINED: 'warn',
-  BLOCK: 'deny',
+  DENY: 'deny',
   ESTOP: 'deny',
 };
 

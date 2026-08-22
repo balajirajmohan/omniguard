@@ -42,9 +42,9 @@ const APPROVED_ROUTE: [number, number][] = [
   [5.9, 1.8],
 ];
 
-const CONTAIN_STEPS = ['Credential revoked', 'Identity quarantined', 'Robot base stop acknowledged'];
+const CONTAIN_STEPS = ['Credential revoked', 'Identity quarantined', 'Robot E-STOP engaged'];
 
-const BLOCK_REASONS = ['UNKNOWN_DEVICE', 'RESTRICTED_DESTINATION', 'EXCESSIVE_SPEED'];
+const DENY_REASONS = ['DEVICE_MISMATCH', 'ZONE_NOT_PERMITTED', 'BEHAVIOR_ANOMALY'];
 
 export function WarehouseScene() {
   const reduced = useReducedMotion();
@@ -363,7 +363,7 @@ export function WarehouseScene() {
         <SceneLabel className="left-[22%] top-[41%]">ZONE_A</SceneLabel>
         <SceneLabel className="right-[16%] top-[41%]">ZONE_B</SceneLabel>
         <SceneLabel className="right-[8%] bottom-[26%]" tone="deny">
-          RESTRICTED_ZONE
+          HUMAN_ZONE
         </SceneLabel>
 
         {/* Gateway caption */}
@@ -382,7 +382,7 @@ export function WarehouseScene() {
               className="pointer-events-none absolute left-1/2 top-[29%] -translate-x-1/2"
             >
               <span className="whitespace-nowrap rounded border border-cyan/40 bg-graphite/90 px-2.5 py-1.5 font-mono text-[10.5px] text-cyan-bright sm:text-[11.5px]">
-                {approvedScenario ? 'MOVE → ZONE_B • 0.8 m/s' : 'MOVE → RESTRICTED_ZONE • 1.8 m/s'}
+                {approvedScenario ? 'MOVE → ZONE_B • 0.8 m/s' : 'MOVE → HUMAN_ZONE • 1.8 m/s'}
               </span>
             </motion.div>
           )}
@@ -417,7 +417,7 @@ export function WarehouseScene() {
               </div>
               {denied ? (
                 <ul className="mt-2.5 space-y-1">
-                  {BLOCK_REASONS.map((r) => (
+                  {DENY_REASONS.map((r) => (
                     <li key={r} className="font-mono text-[10.5px] leading-tight text-ink-dim">
                       <span className="text-deny/80">•</span> {r}
                     </li>
@@ -467,7 +467,7 @@ export function WarehouseScene() {
         <Chip tone={denied ? 'deny' : allowed ? 'allow' : 'cyan'}>
           {denied ? 'Command denied in 42 ms' : allowed ? 'Command approved in 31 ms' : 'Evaluating command'}
         </Chip>
-        <Chip>action-risk-policy-v1</Chip>
+        <Chip>Policy v1.4</Chip>
         <Chip tone={denied ? 'deny' : allowed ? 'allow' : 'neutral'}>
           AI risk {approvedScenario ? '0.08' : '0.96'}
         </Chip>
@@ -485,7 +485,7 @@ export function WarehouseScene() {
 const SCENE_DESCRIPTION =
   'Animated isometric warehouse digital twin showing commands from the control plane to the robot, ' +
   'alternating between an approved move to ZONE_B and ' +
-  'a blocked move into RESTRICTED_ZONE. Every command is evaluated by the OmniGuard gateway before the ' +
+  'a denied move into HUMAN_ZONE. Every command is evaluated by the OmniGuard gateway before the ' +
   'robot moves; unsafe commands trigger credential revocation, quarantine and emergency stop.';
 
 const PARTICLES = [

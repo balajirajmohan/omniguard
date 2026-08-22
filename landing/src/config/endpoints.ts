@@ -24,6 +24,9 @@ export const endpoints = {
 /** Local interactive product preview. */
 export const PREVIEW_ROUTE = '/demo';
 
+/** Compatibility route used by the reverted landing CTAs. */
+export const DEMO_ROUTE = PREVIEW_ROUTE;
+
 /** Real operations console, deployed independently from the landing site. */
 export const OPERATIONS_CONSOLE_URL =
   import.meta.env.VITE_OMNIGUARD_CONSOLE_URL ?? 'http://localhost:5173';
@@ -31,4 +34,6 @@ export const OPERATIONS_CONSOLE_URL =
 /** False until a backend is configured; drives the "product preview" labelling. */
 export const isLiveBackend = base.length > 0;
 
-export const PREVIEW_LABEL = 'Interactive product preview';
+export const PREVIEW_LABEL = isLiveBackend
+  ? 'Live decision stream'
+  : 'Interactive product preview';

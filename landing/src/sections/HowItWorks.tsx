@@ -18,32 +18,24 @@ const layers: Layer[] = [
     kicker: 'VERIFY',
     title: 'Machine identity and device trust',
     body: 'Validate signed credentials, delegated robot grants, controller binding, freshness, and replay protection.',
-    chips: ['Credential verified', 'Controller binding matched', 'Robot grant confirmed'],
+    chips: ['JWT verified', 'Device signature verified', 'Robot grant confirmed'],
     icon: <KeyIcon />,
   },
   {
     step: '02',
     kicker: 'REASON',
     title: 'Policy plus behavioral AI',
-    body: 'Evaluate destination, path, speed, live operating context, and deviations from a versioned behavioral baseline.',
-    chips: ['Restricted destination', 'Speed above 1.5 m/s', 'Effective risk 0.92'],
+    body: 'Evaluate destination, path, speed, live operating context, and deviations from learned fleet behavior.',
+    chips: ['Path crosses HUMAN_ZONE', 'Speed ratio 0.97', 'Anomaly risk 0.96'],
     icon: <BrainIcon />,
   },
   {
     step: '03',
     kicker: 'CONTAIN',
     title: 'Stop the blast radius',
-    body: 'Block unsafe commands, revoke credentials, quarantine identities, and request a robot base stop.',
-    chips: ['Command blocked', 'Credential revoked', 'Base stop acknowledged'],
+    body: 'Deny unsafe commands and automatically revoke credentials, quarantine identities, and emergency-stop moving robots.',
+    chips: ['Command denied', 'Credential revoked', 'E-STOP confirmed'],
     icon: <StopIcon />,
-  },
-  {
-    step: '04',
-    kicker: 'INVESTIGATE',
-    title: 'Explain and recover safely',
-    body: 'Create a durable incident, then ask Sonnet asynchronously to explain evidence, physical impact, and recommended response. The LLM never controls the robot.',
-    chips: ['INC-* created', 'Investigation pending', 'Human-approved recovery'],
-    icon: <BrainIcon />,
   },
 ];
 
@@ -55,13 +47,13 @@ export function HowItWorks() {
       <Reveal>
         <SectionHeading
           eyebrow="HOW IT WORKS"
-          title="One decision plane. Four accountable stages."
-          body="Every command follows the same path. Deterministic checks run first, behavioral evidence is layered on top, containment is acknowledged, and investigation happens asynchronously."
+          title="One decision plane. Three layers of protection."
+          body="Every command crosses the same path. Deterministic checks run first, behavioral evidence is layered on top, and containment is part of the same decision, not a separate runbook."
         />
       </Reveal>
 
       <div className="relative mt-14">
-        {/* Animated flow connecting the four cards. */}
+        {/* Animated flow connecting the three cards. */}
         <div
           aria-hidden="true"
           className="absolute left-1/2 top-0 hidden h-px w-[calc(100%-8rem)] -translate-x-1/2 lg:block"
@@ -76,7 +68,7 @@ export function HowItWorks() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4 lg:gap-6">
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3 lg:gap-6">
           {layers.map((l, i) => (
             <Reveal as="article" key={l.step} delay={i * 0.1}>
               <div

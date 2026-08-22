@@ -23,14 +23,14 @@ import {
   type Outcome,
   type ScenarioId,
 } from '../data/demoData';
-import { PREVIEW_LABEL } from '../config/endpoints';
+import { PREVIEW_LABEL, isLiveBackend } from '../config/endpoints';
 
 const DEFAULT_SCENARIO: ScenarioId = 'stolen';
 
 const outcomeTone: Record<Outcome, Tone> = {
   ALLOW: 'allow',
   ALLOW_CONSTRAINED: 'warn',
-  BLOCK: 'deny',
+  DENY: 'deny',
   ESTOP: 'deny',
 };
 
@@ -63,7 +63,7 @@ export default function Demo() {
           <ul className="order-3 flex w-full flex-wrap items-center gap-x-4 gap-y-1.5 lg:order-none lg:ml-auto lg:w-auto">
             {systemStatus.map((s) => (
               <li key={s.label} className="flex items-center gap-1.5">
-                <Dot tone={s.tone} />
+                <Dot tone={s.tone} pulse={isLiveBackend} />
                 <span className="font-mono text-[10.5px] text-ink-dim">
                   {s.label} <span className="text-ink">{s.value}</span>
                 </span>
@@ -116,7 +116,7 @@ export default function Demo() {
         <main className="min-w-0 flex-1 p-4 sm:p-6">
           <div className="mb-5 flex flex-wrap items-center gap-3">
             <h1 className="text-xl font-semibold tracking-tight text-ink">{view}</h1>
-            <Chip tone="cyan">{PREVIEW_LABEL}</Chip>
+            <Chip tone={isLiveBackend ? 'allow' : 'cyan'}>{PREVIEW_LABEL}</Chip>
             <span className="ml-auto font-mono text-[10.5px] text-ink-faint">
               policy {POLICY_VERSION}
             </span>
@@ -166,6 +166,13 @@ export default function Demo() {
         </main>
       </div>
 
+      <footer className="border-t border-hairline px-4 py-4 sm:px-6">
+        <p className="font-mono text-[10.5px] leading-relaxed text-ink-faint">
+          {isLiveBackend
+            ? 'Connected to the OmniGuard decision API.'
+            : 'Local demo data. See src/data/demoData.ts.'}
+        </p>
+      </footer>
     </div>
   );
 }

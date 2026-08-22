@@ -46,7 +46,7 @@ Expected endpoints:
 - `GET /api/state` — current system and robot state
 
 To stream real decisions, replace the timer inside `src/components/decision/useScenarioRun.ts`
-with the `POST /api/commands` response. Every consumer reads the same `revealed` / `settled` /
+with the `POST /command` response. Every consumer reads the same `revealed` / `settled` /
 `complete` contract, so no UI changes are needed.
 
 ## Structure
