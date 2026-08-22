@@ -64,6 +64,23 @@ export default function App() {
     await ctl.reset();
   }, [ctl, logs]);
 
+  /* Ctrl+R resets the demo. Safe to claim on a Mac -- reload there is Cmd+R --
+   * and a demo reset mid-run is worth a dedicated key. Ignored while typing so
+   * Settings inputs keep working. */
+  useEffect(() => {
+    const onKey = (ev) => {
+      if (!ev.ctrlKey || ev.metaKey || ev.altKey) return;
+      if (ev.key.toLowerCase() !== "r") return;
+      const tag = ev.target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (ev.target?.isContentEditable) return;
+      ev.preventDefault();
+      if (!ctl.resetting) handleReset();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [handleReset, ctl.resetting]);
+
   const latestEvent = useMemo(() => {
     const polled = ctl.events[0];
     if (!scenarioResult) return polled;
@@ -270,7 +287,6 @@ export default function App() {
                     onStick={ctl.setStick}
                     lamps={lamps}
                     leases={leases}
-                    driving={keys}
                     onArmPreset={ctl.sendArmPreset}
                     onGripper={ctl.sendGripper}
                     onEmergencyStop={ctl.emergencyStop}

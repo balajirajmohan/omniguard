@@ -189,6 +189,11 @@ export default function TopBar({
             className={resetting ? "animate-spin" : ""}
           />
           {resetting ? "Resetting" : "Reset demo"}
+          {!resetting && (
+            <kbd className="ml-1 rounded border border-current/30 px-1 py-px font-mono text-[9px] opacity-70">
+              ⌃R
+            </kbd>
+          )}
         </button>
       </div>
     </header>

@@ -26,17 +26,22 @@ export const BINDINGS = {
  *
  * Preset and action names match the sets backend/teleop.py validates against. */
 export const AUX_KEYS = {
-  1: { kind: 'arm', value: 'reach', pad: 'dpad-up' },
-  2: { kind: 'arm', value: 'stow', pad: 'dpad-down' },
-  3: { kind: 'arm', value: 'carry', pad: 'dpad-left' },
-  4: { kind: 'arm', value: 'inspect', pad: 'dpad-right' },
-  /* Gripper keys are per plane, matching the shoulders: the operator's sit by
-   * WASD, the hacker's by the arrow keys. */
+  /* Arm presets, per plane: the operator's sit by WASD, the hacker's by the
+   * arrow keys, matching the d-pad / face-button split on the pad. */
+  1: { kind: 'arm', value: 'reach', panel: 'legit', pad: 'dpad-up' },
+  2: { kind: 'arm', value: 'stow', panel: 'legit', pad: 'dpad-down' },
+  3: { kind: 'arm', value: 'carry', panel: 'legit', pad: 'dpad-left' },
+  4: { kind: 'arm', value: 'inspect', panel: 'legit', pad: 'dpad-right' },
+  7: { kind: 'arm', value: 'reach', panel: 'rogue', pad: 'triangle' },
+  8: { kind: 'arm', value: 'stow', panel: 'rogue', pad: 'cross' },
+  9: { kind: 'arm', value: 'carry', panel: 'rogue', pad: 'square' },
+  0: { kind: 'arm', value: 'inspect', panel: 'rogue', pad: 'circle' },
+  /* Gripper, per plane, matching the shoulders. */
   q: { kind: 'gripper', value: 'open', panel: 'legit', pad: 'L1' },
   e: { kind: 'gripper', value: 'close', panel: 'legit', pad: 'L2' },
   o: { kind: 'gripper', value: 'open', panel: 'rogue', pad: 'R1' },
   p: { kind: 'gripper', value: 'close', panel: 'rogue', pad: 'R2' },
-  ' ': { kind: 'estop', value: null, pad: 'circle' },
+  ' ': { kind: 'estop', value: null, pad: 'touchpad' },
 };
 
 const normalise = (ev) => (ev.key.length === 1 ? ev.key.toLowerCase() : ev.key);
@@ -98,7 +103,7 @@ export function useKeyboardControl(setStick, { enabled = true, actions } = {}) {
       if (aux) {
         ev.preventDefault();        // space must not scroll or re-fire a button
         const a = actionsRef.current;
-        if (aux.kind === 'arm') a?.armPreset?.(aux.value);
+        if (aux.kind === 'arm') a?.armPresetFor?.(aux.panel, aux.value);
         else if (aux.kind === 'gripper') a?.gripperFor?.(aux.panel, aux.value);
         else a?.emergencyStop?.();
         return;

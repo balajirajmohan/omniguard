@@ -42,7 +42,13 @@ export default function IncidentList({ incidents, selectedId, onSelect }) {
           <tr className="border-b border-line">
             {['ID', 'Status', 'First seen', 'Last seen', 'Events', 'Device',
               'Source', 'Risk', 'Playbook', 'Containment'].map((h) => (
-              <th key={h} className="py-1.5 pr-2 text-left label whitespace-nowrap">{h}</th>
+              /* Not .label — it sets display:block, which drops a <th> out of the
+                 table layout and misaligns the headers. */
+              <th key={h}
+                className="py-1.5 pr-2 text-left text-[9px] font-semibold uppercase
+                           tracking-[.16em] whitespace-nowrap text-faint">
+                {h}
+              </th>
             ))}
           </tr>
         </thead>

@@ -34,7 +34,7 @@ function EntryRow({ e }) {
       <td className="py-1.5 pr-3 font-mono text-[10px] tabular-nums text-dim">
         {e.anomaly_risk_score ?? '—'}
       </td>
-      <td className="py-1.5 font-mono text-[10px] text-dim">
+      <td className="py-1.5 pr-3 font-mono text-[10px] text-dim">
         {(e.reasons ?? []).join(', ') || e.detail || '—'}
       </td>
     </tr>
@@ -51,7 +51,14 @@ function EntryTable({ entries }) {
         <thead className="sticky top-0 bg-surface/95 backdrop-blur">
           <tr className="border-b border-line">
             {['time', 'decision', 'device', 'target', 'risk', 'reasons'].map((h) => (
-              <th key={h} className="py-1.5 pr-3 text-left label">{h}</th>
+              /* Not the .label utility: it applies `display:block`, which drops a
+                 <th> out of the table layout so the headers stop tracking their
+                 columns. Same look, spelled out. */
+              <th key={h}
+                className="py-1.5 pr-3 text-left text-[9px] font-semibold uppercase
+                           tracking-[.16em] text-faint">
+                {h}
+              </th>
             ))}
           </tr>
         </thead>
