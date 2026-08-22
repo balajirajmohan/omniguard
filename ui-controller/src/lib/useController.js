@@ -34,18 +34,26 @@ const AUX_LEASE_SPEED = 0.8;
 /* Renew rather than gamble on a lease that is about to lapse mid-request. */
 const AUX_LEASE_MARGIN_MS = 3000;
 
-/* Physical button -> command. Preset and action names mirror the sets
- * backend/teleop.py validates against; anything else is INVALID_ARM_PRESET /
- * INVALID_GRIPPER_ACTION server-side. */
-/* Standard-mapping button indices. The gripper is split by plane so each side
- * of the pad belongs to one control plane, mirroring the thumbsticks:
- * left shoulders drive the valid operator, right shoulders drive the hacker.
+/* Standard-mapping button indices. The pad is split down the middle: every
+ * control on the left half belongs to the valid operator, every control on the
+ * right half to the hacker. Nothing is addressed by "whoever holds a lease", so
+ * a press can never be misattributed to the wrong plane.
+ *
+ *   left   d-pad = arm      L1/L2 = gripper    left stick  = movement
+ *   right  faces = arm      R1/R2 = gripper    right stick = movement
+ *
+ * Preset and action names mirror the sets backend/teleop.py validates against;
+ * anything else is INVALID_ARM_PRESET / INVALID_GRIPPER_ACTION server-side.
  * The hacker's presses are expected to be rejected -- that is the demo. */
 export const AUX_BUTTONS = [
-  [12, (a) => a.armPreset("reach")],
-  [13, (a) => a.armPreset("stow")],
-  [14, (a) => a.armPreset("carry")],
-  [15, (a) => a.armPreset("inspect")],
+  [12, (a) => a.armPresetFor("legit", "reach")], // d-pad up
+  [13, (a) => a.armPresetFor("legit", "stow")], // d-pad down
+  [14, (a) => a.armPresetFor("legit", "carry")], // d-pad left
+  [15, (a) => a.armPresetFor("legit", "inspect")], // d-pad right
+  [3, (a) => a.armPresetFor("rogue", "reach")], // triangle
+  [0, (a) => a.armPresetFor("rogue", "stow")], // cross
+  [2, (a) => a.armPresetFor("rogue", "carry")], // square
+  [1, (a) => a.armPresetFor("rogue", "inspect")], // circle
   [4, (a) => a.gripperFor("legit", "open")], // L1
   [6, (a) => a.gripperFor("legit", "close")], // L2
   [5, (a) => a.gripperFor("rogue", "open")], // R1
@@ -1021,37 +1029,16 @@ export function useController(cfg) {
     [handleLeaseCommand, publishManipulator],
   );
 
-  /* Arm presets ride whichever plane holds a lease (or is actively driving).
-   * With no lease yet, ensureLease() takes a short aux lease via /api/teleop/start
-   * so the press still produces a real identity/policy verdict. Gripper shoulders
-   * are plane-addressed separately (left = operator, right = hacker). */
-  const leaseOwner = useCallback(() => {
-    for (const id of PANEL_IDS) if (sessions.current[id].controlId) return id;
-    /* No lease: attribute the attempt to whoever is actually driving, so a
-     * hacker's blocked arm command is reported on the hacker's panel instead of
-     * looking like the operator fumbled.
-     *
-     * Only live phases count. 'denied' is sticky -- it survives until the plane
-     * is grabbed again -- so treating it as driving would permanently redirect
-     * every arm press to a plane that can never hold a lease, and every press
-     * would come back rejected. */
-    for (const id of PANEL_IDS) {
-      const phase = sessions.current[id].phase;
-      if (phase === "starting" || phase === "streaming") return id;
-    }
-    return PANEL_IDS[0];
-  }, []);
-
-  /* The same three commands the d-pad, shoulders and Circle issue, bound to the
-   * lease holder so the keyboard is a peer input rather than a special case. */
+  /* Every control names its plane, so nothing has to be inferred from who holds
+   * a lease. With no lease yet, ensureLease() takes a short aux lease via
+   * /api/teleop/start so the press still produces a real identity verdict. */
   const aux = useMemo(
     () => ({
-      armPreset: (preset) => sendArmPreset(leaseOwner(), preset),
-      /* Gripper is addressed by plane, so a press always says who is asking. */
+      armPresetFor: (panel, preset) => sendArmPreset(panel, preset),
       gripperFor: (panel, action) => sendGripper(panel, action),
       emergencyStop,
     }),
-    [leaseOwner, sendArmPreset, sendGripper, emergencyStop],
+    [sendArmPreset, sendGripper, emergencyStop],
   );
 
   useEffect(() => {

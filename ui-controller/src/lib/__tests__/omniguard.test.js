@@ -401,17 +401,15 @@ describe("gamepad mapping", () => {
     expect(OG.padStickFor(undefined, 0).active).toBe(false);
   });
 
-  it("detects Circle as the emergency stop", () => {
-    expect(
-      OG.padEstopPressed(
-        pad([0, 0, 0, 0], [{pressed: false}, {pressed: true}]),
-      ),
-    ).toBe(true);
-    expect(
-      OG.padEstopPressed(
-        pad([0, 0, 0, 0], [{pressed: true}, {pressed: false}]),
-      ),
-    ).toBe(false);
+  it("takes the emergency stop from the centre cluster, not Circle", () => {
+    /* Circle is the hacker's "inspect" preset now, so pressing it must not
+     * also trip the emergency stop. */
+    const buttons = (downIndex) =>
+      Array.from({length: 18}, (_, i) => ({pressed: i === downIndex}));
+    for (const index of OG.PAD_ESTOP_BUTTONS) {
+      expect(OG.padEstopPressed(pad([0, 0, 0, 0], buttons(index)))).toBe(true);
+    }
+    expect(OG.padEstopPressed(pad([0, 0, 0, 0], buttons(1)))).toBe(false);
     expect(OG.padEstopPressed(undefined)).toBe(false);
   });
 });
@@ -494,7 +492,7 @@ describe("controller aux buttons (arm + gripper)", () => {
     const {AUX_BUTTONS} = await import("../useController.js");
     const calls = [];
     const aux = {
-      armPreset: (p) => calls.push(["arm", p]),
+      armPresetFor: (panel, p) => calls.push(["arm", p, panel]),
       gripperFor: (panel, a) => calls.push(["grip", a, panel]),
     };
     const byIndex = {};
@@ -506,12 +504,17 @@ describe("controller aux buttons (arm + gripper)", () => {
     return byIndex;
   };
 
-  it("maps the d-pad to the four arm presets", async () => {
+  /* The d-pad is the operator's arm; the face buttons are the hacker's. */
+  it("splits the arm presets across the two control planes", async () => {
     const b = await fireAll();
-    expect(b[12]).toEqual(["arm", "reach"]);
-    expect(b[13]).toEqual(["arm", "stow"]);
-    expect(b[14]).toEqual(["arm", "carry"]);
-    expect(b[15]).toEqual(["arm", "inspect"]);
+    expect(b[12]).toEqual(["arm", "reach", "legit"]);
+    expect(b[13]).toEqual(["arm", "stow", "legit"]);
+    expect(b[14]).toEqual(["arm", "carry", "legit"]);
+    expect(b[15]).toEqual(["arm", "inspect", "legit"]);
+    expect(b[3]).toEqual(["arm", "reach", "rogue"]); // triangle
+    expect(b[0]).toEqual(["arm", "stow", "rogue"]); // cross
+    expect(b[2]).toEqual(["arm", "carry", "rogue"]); // square
+    expect(b[1]).toEqual(["arm", "inspect", "rogue"]); // circle
   });
 
   /* Left shoulders belong to the operator, right shoulders to the hacker, so a
@@ -529,7 +532,7 @@ describe("controller aux buttons (arm + gripper)", () => {
     const sent = Object.values(b);
     const presets = sent.filter(([k]) => k === "arm").map(([, v]) => v);
     const actions = sent.filter(([k]) => k === "grip").map(([, v]) => v);
-    expect(presets.sort()).toEqual([...BACKEND_PRESETS].sort());
+    expect([...new Set(presets)].sort()).toEqual([...BACKEND_PRESETS].sort());
     expect([...new Set(actions)].sort()).toEqual([...BACKEND_ACTIONS].sort());
   });
 
@@ -657,7 +660,7 @@ describe("aux key bindings", () => {
     const actions = entries
       .filter((e) => e.kind === "gripper")
       .map((e) => e.value);
-    expect(presets.sort()).toEqual([...OG.ARM_PRESETS].sort());
+    expect([...new Set(presets)].sort()).toEqual([...OG.ARM_PRESETS].sort());
     expect([...new Set(actions)].sort()).toEqual(
       [...OG.GRIPPER_ACTIONS].sort(),
     );
@@ -717,25 +720,45 @@ describe("aux key bindings", () => {
     expect(byPad.L2).toBe("close");
     expect(byPad.R1).toBe("open");
     expect(byPad.R2).toBe("close");
-    expect(byPad.circle).toBeNull();
+    /* Circle is the hacker's "inspect" preset now; the stop moved to the
+     * centre cluster. */
+    expect(byPad.circle).toBe("inspect");
+    expect(byPad.touchpad).toBeNull();
   });
 });
 
 describe("aux command attribution", () => {
-  /* Regression: a denied plane stays 'denied' until it is grabbed again. If
-   * that counted as driving, every later arm press would be redirected to a
-   * plane that can never hold a lease and would come back rejected. */
-  it("never attributes an arm press to a denied plane", async () => {
+  /* Every control names its plane, so nothing is inferred from who holds a
+   * lease. That removes a whole class of bug: an arm press can no longer be
+   * redirected to a plane that can never hold one. */
+  it("addresses every arm and gripper command by plane", async () => {
+    const {AUX_BUTTONS} = await import("../useController.js");
+    const {AUX_KEYS} = await import("../useKeyboardControl.js");
     const src = readFileSync(
       new URL("../useController.js", import.meta.url).pathname,
       "utf8",
     );
-    const owner = src.slice(
-      src.indexOf("const leaseOwner"),
-      src.indexOf("const aux = useMemo"),
-    );
-    expect(owner).toMatch(/phase === ["']starting["']/);
-    expect(owner).toMatch(/phase === ["']streaming["']/);
-    expect(owner).not.toMatch(/phase !== ['"]idle['"]/);
+
+    expect(src).not.toContain("leaseOwner");
+
+    const calls = [];
+    const aux = {
+      armPresetFor: (panel, preset) => calls.push([panel, "arm", preset]),
+      gripperFor: (panel, action) => calls.push([panel, "grip", action]),
+    };
+    for (const [, fire] of AUX_BUTTONS) fire(aux);
+    for (const [panel] of calls) expect(["legit", "rogue"]).toContain(panel);
+
+    /* Both planes get the full vocabulary on the pad and on the keyboard. */
+    for (const panel of ["legit", "rogue"]) {
+      const presets = calls
+        .filter(([p, kind]) => p === panel && kind === "arm")
+        .map(([, , v]) => v);
+      expect(presets.sort()).toEqual([...OG.ARM_PRESETS].sort());
+    }
+    for (const entry of Object.values(AUX_KEYS)) {
+      if (entry.kind === "estop") continue;
+      expect(["legit", "rogue"]).toContain(entry.panel);
+    }
   });
 });
