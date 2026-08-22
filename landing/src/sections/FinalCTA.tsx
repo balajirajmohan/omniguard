@@ -1,6 +1,6 @@
 import { Reveal } from '../components/ui/Reveal';
 import { ArrowRight, ButtonLink } from '../components/ui/Button';
-import { OPERATIONS_CONSOLE_URL } from '../config/endpoints';
+import { DEMO_ROUTE } from '../config/endpoints';
 
 export function FinalCTA() {
   return (
@@ -25,13 +25,13 @@ export function FinalCTA() {
         <Reveal delay={0.1}>
           <p className="mx-auto mt-6 max-w-2xl text-[15px] leading-relaxed text-ink-dim sm:text-[17px]">
             See how OmniGuard intercepts an unsafe robot command, explains the decision, and
-            contains the compromised identity in the live operations console.
+            contains the compromised identity in a live warehouse digital twin.
           </p>
         </Reveal>
         <Reveal delay={0.18}>
           <div className="mt-9 flex flex-wrap justify-center gap-3">
-            <ButtonLink href={OPERATIONS_CONSOLE_URL} size="lg">
-              Open Live Operations Console
+            <ButtonLink href={DEMO_ROUTE} size="lg">
+              Start the Live Demo
               <ArrowRight />
             </ButtonLink>
             <ButtonLink href="#decision-lab" variant="secondary" size="lg">

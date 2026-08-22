@@ -8,7 +8,7 @@ import type { Outcome } from '../../data/demoData';
  */
 export function TwinMap({ outcome }: { outcome: Outcome }) {
   const reduced = useReducedMotion();
-  const blocked = outcome === 'BLOCK' || outcome === 'ESTOP';
+  const blocked = outcome === 'DENY' || outcome === 'ESTOP';
 
   // A denied command never leaves the staging aisle; an allowed one runs to ZONE_B.
   const robotPos = blocked ? { x: 2.2, y: 5.2 } : { x: 5.6, y: 1.6 };
@@ -127,7 +127,7 @@ export function TwinMap({ outcome }: { outcome: Outcome }) {
         ZONE_B
       </span>
       <span className="pointer-events-none absolute bottom-[20%] right-[10%] font-mono text-[9.5px] tracking-[0.12em] text-deny/85">
-        RESTRICTED_ZONE
+        HUMAN_ZONE
       </span>
     </div>
   );

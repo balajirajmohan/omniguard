@@ -9,7 +9,7 @@ import { RiskMeter } from '../components/decision/RiskMeter';
 import { Verdict } from '../components/decision/Verdict';
 import { useScenarioRun } from '../components/decision/useScenarioRun';
 import { scenarioById, POLICY_VERSION, type ScenarioId } from '../data/demoData';
-import { OPERATIONS_CONSOLE_URL, PREVIEW_LABEL } from '../config/endpoints';
+import { OPERATIONS_CONSOLE_URL, PREVIEW_LABEL, isLiveBackend } from '../config/endpoints';
 
 export function DecisionLab() {
   const [selected, setSelected] = useState<ScenarioId>('stolen');
@@ -31,7 +31,7 @@ export function DecisionLab() {
           {/* Console chrome */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-hairline bg-surface-2/60 px-4 py-3 sm:px-6">
             <div className="flex items-center gap-2">
-              <Dot tone="cyan" />
+              <Dot tone={isLiveBackend ? 'allow' : 'cyan'} pulse={isLiveBackend} />
               <span className="font-mono text-[10.5px] tracking-[0.14em] text-ink-dim">
                 {PREVIEW_LABEL.toUpperCase()}
               </span>
@@ -90,6 +90,11 @@ export function DecisionLab() {
 
           {/* Console footer */}
           <div className="flex flex-wrap items-center gap-4 border-t border-hairline bg-surface-2/40 px-4 py-4 sm:px-6">
+            {isLiveBackend && (
+              <p className="font-mono text-[10.5px] leading-relaxed text-ink-faint">
+                Connected to the OmniGuard decision API.
+              </p>
+            )}
             <ButtonLink href={OPERATIONS_CONSOLE_URL} size="sm" className="ml-auto">
               Open Live Operations Console
               <ArrowRight />

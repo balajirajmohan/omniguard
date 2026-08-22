@@ -28,7 +28,7 @@ const checkpoints = [
   {
     id: '03',
     label: 'Physical envelope crossed',
-    detail: 'RESTRICTED_ZONE at 4.2 m · requested 1.80 m/s',
+    detail: 'HUMAN_ZONE at 4.2 m · requested 1.80 m/s',
     status: 'FAIL',
     tone: 'text-deny',
   },
@@ -108,7 +108,7 @@ export function DigitalTwin() {
                     REPLAYED COMMAND
                   </p>
                   <p className="mt-2 font-mono text-[11px] leading-relaxed text-ink-dim">
-                    fleet-agent-01 / rogue-laptop / MOVE RESTRICTED_ZONE / 1.80 m/s
+                    fleet-agent-01 / rogue-laptop / MOVE HUMAN_ZONE / 1.80 m/s
                   </p>
                 </div>
 

@@ -1,8 +1,7 @@
 import { motion } from 'framer-motion';
-import { ArrowRight, ButtonLink } from '../components/ui/Button';
+import { ButtonLink } from '../components/ui/Button';
 import { WarehouseScene } from '../components/scene/WarehouseScene';
 import { useReducedMotion } from '../hooks/useMotionPrefs';
-import { OPERATIONS_CONSOLE_URL, PREVIEW_ROUTE } from '../config/endpoints';
 
 export function Hero() {
   const reduced = useReducedMotion();
@@ -67,12 +66,8 @@ export function Hero() {
           </motion.p>
 
           <motion.div {...rise(0.24)} className="mt-8 flex flex-wrap items-center gap-3">
-            <ButtonLink href={OPERATIONS_CONSOLE_URL} size="lg">
-              Open Live Operations Console
-              <ArrowRight />
-            </ButtonLink>
-            <ButtonLink href={PREVIEW_ROUTE} variant="secondary" size="lg">
-              Interactive Product Preview
+            <ButtonLink href="#how-it-works" variant="secondary" size="lg">
+              See How It Works
             </ButtonLink>
           </motion.div>
 

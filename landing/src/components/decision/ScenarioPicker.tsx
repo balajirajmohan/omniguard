@@ -4,7 +4,7 @@ const tone: Record<ScenarioId, { dot: string; active: string }> = {
   normal: { dot: 'bg-allow', active: 'border-allow/50 bg-allow/8' },
   stolen: { dot: 'bg-deny', active: 'border-deny/55 bg-deny/10' },
   anomaly: { dot: 'bg-warn', active: 'border-warn/50 bg-warn/8' },
-  manipulation: { dot: 'bg-deny', active: 'border-deny/55 bg-deny/10' },
+  sensor: { dot: 'bg-deny', active: 'border-deny/55 bg-deny/10' },
 };
 
 /** Radio-style scenario selector. Arrow keys work via native radio semantics. */
