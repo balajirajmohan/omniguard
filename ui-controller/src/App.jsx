@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Grab, Keyboard, PlugZap, Radar, ShieldAlert } from 'lucide-react';
 import DecisionCard from './components/DecisionCard.jsx';
 import DualSense from './components/DualSense.jsx';
+import IncidentCenter from './components/IncidentCenter.jsx';
 import InvestigatePanel from './components/InvestigatePanel.jsx';
 import LogsView from './components/LogsView.jsx';
 import PlaneCard from './components/PlaneCard.jsx';
@@ -13,6 +14,7 @@ import {
   DEMO_CREDENTIAL, DEMO_OPERATOR_TOKEN, loadConfig, saveConfig,
 } from './lib/omniguard.js';
 import { useController } from './lib/useController.js';
+import { useIncidents } from './lib/useIncidents.js';
 import { useKeyboardControl } from './lib/useKeyboardControl.js';
 import { useSessionLog } from './lib/useSessionLog.js';
 
@@ -24,6 +26,10 @@ export default function App() {
 
   const ctl = useController(cfg);
   const logs = useSessionLog();
+
+  /* Incident polling only runs when the Incidents view is active, so it never
+   * interferes with the teleop streaming in useController. */
+  const inc = useIncidents(cfg, { enabled: view === 'incidents' });
 
   /* Window-level, so nothing has to be clicked before the keys work:
    * WASD drives the operator, arrow keys drive the hacker. */
@@ -85,6 +91,7 @@ export default function App() {
         view={view} onView={setView} pad={ctl.padLabel} resetting={ctl.resetting}
         settingsOpen={showSettings} onReset={handleReset}
         onToggleSettings={() => setShowSettings((v) => !v)}
+        aiAvailable={inc.aiAvailable}
       />
 
       {showSettings && (
@@ -120,6 +127,16 @@ export default function App() {
       {view === 'logs' ? (
         <LogsView sessions={logs.sessions} current={logs.current}
           onRemove={logs.removeSession} onClearAll={logs.clearAll} />
+      ) : view === 'incidents' ? (
+        <IncidentCenter
+          incidents={inc.incidents}
+          activeDetail={inc.activeDetail}
+          selectedId={inc.activeIncident}
+          onSelect={inc.selectIncident}
+          aiAvailable={inc.aiAvailable}
+          error={inc.error}
+          cfg={cfg}
+        />
       ) : (
         <>
           {/* Hero: map and controller side by side, both above the fold. */}
@@ -193,3 +210,4 @@ export default function App() {
     </div>
   );
 }
+

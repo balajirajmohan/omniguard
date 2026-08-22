@@ -156,6 +156,13 @@ const CSV_COLUMNS = [
   ['speed', (e) => e.speed],
   ['reasons', (e) => (e.reasons ?? []).join(' ')],
   ['actions', (e) => (e.actions ?? []).join(' ')],
+  /* AI provenance fields — appended, never removing existing columns. */
+  ['decision_source', (e) => e.decision_source],
+  ['anomaly_model_version', (e) => e.anomaly_model_version],
+  ['ai_mode', (e) => e.ai_mode],
+  ['incident_id', (e) => e.incident_id],
+  ['response_playbook', (e) => e.response_playbook],
+  ['containment_ack', (e) => e.containment_ack],
 ];
 
 /* Quote everything and double embedded quotes — reason strings are free text. */

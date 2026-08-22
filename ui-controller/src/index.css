@@ -103,6 +103,19 @@
   .btn-primary:hover { filter: brightness(1.1); }
   /* Panes scroll internally so the shell itself never scrolls on desktop. */
   .pane { @apply min-h-0 overflow-y-auto; }
+
+  /* AI incident console additions — additive only, no existing styles modified. */
+  .badge-source {
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5
+           text-[9px] font-bold tracking-[.08em];
+  }
+  .status-dot {
+    @apply size-2 rounded-full;
+  }
+  .evidence-row {
+    @apply flex items-baseline justify-between gap-2 rounded-md border border-line
+           bg-sunken/70 px-1.5 py-0.5 font-mono text-[9.5px];
+  }
 }
 
 @keyframes og-rise   { from { opacity:0; transform: translateY(6px) } to { opacity:1; transform:none } }

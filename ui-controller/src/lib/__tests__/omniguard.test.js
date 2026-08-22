@@ -425,7 +425,7 @@ describe('session log export', () => {
     const csv = toCsv([{ final_decision: 'BLOCK', reasons: ['said "no", firmly'] }]);
     expect(csv).toContain('"said ""no"", firmly"');
     // The embedded comma must not create an extra column.
-    expect(csv.split('\n')[1].split('","')).toHaveLength(12);
+    expect(csv.split('\n')[1].split('","')).toHaveLength(18);
   });
 
   it('tolerates missing fields rather than writing undefined', async () => {
