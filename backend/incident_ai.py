@@ -197,7 +197,7 @@ def _explain_openai(event: dict) -> dict:
     if provider_label == "openrouter":
         # Hackathon OpenRouter — OmniGuard team default: Claude Sonnet 4.6
         default_base = "https://openrouter.ai/api/v1"
-        default_model = "anthropic.claude-sonnet-4-6"
+        default_model = "anthropic/claude-sonnet-4.6"
         model = os.getenv("OPENROUTER_MODEL") or os.getenv("OPENAI_MODEL", default_model)
         base = (
             os.getenv("OPENROUTER_BASE_URL")
@@ -338,7 +338,7 @@ def llm_status() -> dict:
         model = (
             os.getenv("OPENROUTER_MODEL")
             or os.getenv("OPENAI_MODEL")
-            or "anthropic.claude-sonnet-4-6"
+            or "anthropic/claude-sonnet-4.6"
         )
         live = bool(os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY"))
     elif provider == "openai":

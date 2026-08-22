@@ -702,6 +702,7 @@ export function useController(cfg) {
   useEffect(() => {
     let alive = true;
     let handle;
+    let consecutiveFailures = 0;
 
     const poll = async () => {
       const c = cfgRef.current;
@@ -717,6 +718,7 @@ export function useController(cfg) {
             trailRef.current = [...trailRef.current.slice(-399), pos];
           }
         }
+        consecutiveFailures = 0;
         if (alive) {
           setStatus({
             robot_status: s.robot_status,
@@ -728,6 +730,8 @@ export function useController(cfg) {
             last_containment_ack: s.last_containment_ack,
             bridge,
             online: true,
+            connection: "ONLINE",
+            last_successful_update: new Date().toISOString(),
           });
           setWorld((prev) => ({
             ...prev,
@@ -738,12 +742,25 @@ export function useController(cfg) {
           }));
         }
       } catch {
-        if (alive)
-          setStatus((prev) => ({
-            ...prev,
-            online: false,
-            robot_status: "API DOWN",
-          }));
+        consecutiveFailures += 1;
+        if (alive) {
+          setStatus((prev) => {
+            if (consecutiveFailures >= 3) {
+              return {
+                ...prev,
+                online: false,
+                connection: "OFFLINE",
+                robot_status: "API DOWN",
+              };
+            }
+            // Preserve last known robot fields; mark degraded after first failure.
+            return {
+              ...prev,
+              online: consecutiveFailures < 3,
+              connection: "DEGRADED",
+            };
+          });
+        }
       }
 
       const [ev, tl] = await Promise.allSettled([getEvents(c), getTimeline(c)]);

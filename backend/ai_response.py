@@ -149,6 +149,13 @@ class AIResponseEngine:
         if decision.final_decision == "BLOCK":
             action_history.note_failure(agent_id, device_id)
 
+        # Sonnet only after decision + containment — never on the safety path.
+        if incident and decision.final_decision in {"BLOCK", "HOLD"}:
+            from backend.investigation_service import investigation_service
+
+            investigation_service.schedule(incident["incident_id"])
+            incident = incident_store.get(incident["incident_id"]) or incident
+
         return decision, incident
 
 

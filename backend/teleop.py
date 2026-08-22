@@ -365,6 +365,7 @@ class TeleopManager:
                 reasons=[str(exc)],
                 agent_id=agent_id,
                 device_id=device_id,
+                credential=credential,
             )
 
         security = self._get_security_state()
@@ -415,6 +416,7 @@ class TeleopManager:
                 ai_info=ai_info,
                 features=features,
                 zone=zone,
+                credential=credential,
             )
 
         control_id = str(uuid.uuid4())
@@ -845,6 +847,27 @@ class TeleopManager:
                 command_id=None,
                 motion_state="STOPPED",
             )
+        # Routine stops are audit-only; repeated abuse escalates via threshold.
+        if lease_snapshot is not None:
+            from backend.incident_service import note_audit_event
+
+            mapped = reason if reason in {
+                "JOYSTICK_RELEASED",
+                "PAGE_BLUR",
+                "DEADMAN_TIMEOUT",
+                "OPERATOR_DISCONNECT",
+                "SESSION_TERMINATED",
+            } else "TELEOP_STOP"
+            note_audit_event(
+                reason=mapped,
+                agent_id=lease_snapshot.agent_id,
+                device_id=lease_snapshot.device_id,
+                robot_id=robot_id,
+                session_id=lease_snapshot.control_id,
+                demo_run_id=str(
+                    (self._get_security_state() or {}).get("demo_run_id") or ""
+                ),
+            )
         stage = "EXECUTED"
         command_id = None
         if actuation is not None:
@@ -883,6 +906,7 @@ class TeleopManager:
         ai_info: dict[str, Any] | None = None,
         features: dict[str, Any] | None = None,
         zone: str | None = None,
+        credential: str = "",
     ) -> dict[str, Any]:
         actions = [
             "COMMAND_REJECTED",
@@ -891,7 +915,43 @@ class TeleopManager:
             "AGENT_QUARANTINED",
         ]
         self._apply_containment(robot_id, actions)
-        maybe_actuate_stop(robot_id)
+        stop = maybe_actuate_stop(robot_id)
+        containment = {
+            "ok": stop is None or (stop.ok and stop.stage != "FAILED"),
+            "acknowledged": ["ROBOT_ESTOP_REQUESTED"]
+            + (["STOP_BASE"] if stop is None or stop.stage == "EXECUTED" else []),
+            "unverified": ["STOP_BASE"]
+            if stop is not None and stop.stage == "QUEUED"
+            else [],
+            "stage": "MOCK_SKIPPED" if stop is None else stop.stage,
+        }
+        from backend.incident_classification import playbook_for_hard_reasons
+        from backend.incident_service import record_security_decision
+
+        security = self._get_security_state()
+        enrichment = record_security_decision(
+            {
+                "final_decision": "BLOCK",
+                "decision_source": "hard_policy",
+                "reasons": reasons,
+                "hard_policy_would_block": True,
+                "requires_incident": True,
+                "agent_id": agent_id,
+                "device_id": device_id,
+                "robot_id": robot_id,
+                "destination": zone,
+                "policy_decision": "DENY",
+                "response_playbook": playbook_for_hard_reasons(reasons),
+                "anomaly_risk_score": ai_risk,
+                "anomaly_features": features,
+                "anomaly_model_version": (ai_info or {}).get("model_version"),
+            },
+            credential=credential,
+            demo_run_id=str(security.get("demo_run_id") or ""),
+            schedule_investigation=True,
+            contain=True,
+            containment_result=containment,
+        )
         event = {
             "timestamp": _utcnow().isoformat(),
             "kind": "teleop_start",
@@ -903,9 +963,13 @@ class TeleopManager:
             "reasons": reasons,
             "anomaly_risk_score": ai_risk,
             "caught_by": "hard_policy",
+            "decision_source": "hard_policy",
             "hard_policy_would_block": True,
             "zone": zone,
             "actions": actions + ["ISAAC_ESTOP_QUEUED"],
+            "incident_id": enrichment.get("incident_id"),
+            "investigation_status": enrichment.get("investigation_status"),
+            "containment": containment,
             "ai": {
                 "risk": ai_risk,
                 "model": "IsolationForest",
@@ -924,6 +988,10 @@ class TeleopManager:
             "max_speed": MAX_TELEOP_SPEED,
             "allowed_zones": [],
             "zone": zone,
+            "incident_id": enrichment.get("incident_id"),
+            "investigation_status": enrichment.get("investigation_status"),
+            "decision_source": "hard_policy",
+            "containment": containment,
             "ai": {
                 "risk": ai_risk,
                 "model": "IsolationForest",
@@ -948,13 +1016,13 @@ class TeleopManager:
             if lease is not None:
                 lease.active = False
             maybe_actuate_stop(robot_id)
-            # Restricted / overspeed / replay during teleop = fail closed containment
+            # Physical / identity hard violations fail-closed with containment.
+            # Sequence/lease protocol failures stay audit-only (escalate by threshold).
             if any(
                 r in reasons
                 for r in (
                     "RESTRICTED_DESTINATION",
                     "EXCESSIVE_SPEED",
-                    "SEQUENCE_REPLAY",
                     "REVOKED_CREDENTIAL",
                     "IDENTITY_QUARANTINED",
                 )
@@ -968,6 +1036,47 @@ class TeleopManager:
                         "AGENT_QUARANTINED",
                     ],
                 )
+                from backend.incident_classification import playbook_for_hard_reasons
+                from backend.incident_service import record_security_decision
+
+                security = self._get_security_state() or {}
+                enrichment = record_security_decision(
+                    {
+                        "final_decision": "BLOCK",
+                        "decision_source": "hard_policy",
+                        "reasons": reasons,
+                        "hard_policy_would_block": True,
+                        "requires_incident": True,
+                        "agent_id": lease.agent_id if lease else "unknown",
+                        "device_id": lease.device_id if lease else "unknown",
+                        "robot_id": robot_id,
+                        "destination": zone,
+                        "policy_decision": "DENY",
+                        "response_playbook": playbook_for_hard_reasons(reasons),
+                    },
+                    credential=lease.credential if lease else "",
+                    demo_run_id=str(security.get("demo_run_id") or ""),
+                    schedule_investigation=True,
+                    contain=True,
+                    containment_result={"ok": True, "acknowledged": ["ROBOT_ESTOP_REQUESTED"]},
+                )
+            else:
+                enrichment = {}
+                from backend.incident_service import note_audit_event
+
+                if lease is not None:
+                    for reason in reasons:
+                        note_audit_event(
+                            reason=reason,
+                            agent_id=lease.agent_id,
+                            device_id=lease.device_id,
+                            robot_id=robot_id,
+                            session_id=lease.control_id,
+                            demo_run_id=str(
+                                (self._get_security_state() or {}).get("demo_run_id")
+                                or ""
+                            ),
+                        )
             self._append_event(
                 {
                     "timestamp": _utcnow().isoformat(),
@@ -977,8 +1086,18 @@ class TeleopManager:
                     "reasons": reasons,
                     "final_decision": "BLOCK",
                     "zone": zone,
+                    "incident_id": enrichment.get("incident_id"),
                 }
             )
+            return {
+                "status": "REJECTED",
+                "reasons": reasons,
+                "control_id": control_id,
+                "sequence": sequence,
+                "zone": zone,
+                "incident_id": enrichment.get("incident_id"),
+                "investigation_status": enrichment.get("investigation_status"),
+            }
         return {
             "status": "REJECTED",
             "reasons": reasons,

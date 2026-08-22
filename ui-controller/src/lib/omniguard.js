@@ -518,6 +518,7 @@ export function normalizeAiStatus(raw) {
  * Never heuristically replace a backend-provided decision_source. */
 const DECISION_SOURCES = [
   "hard_policy",
+  "command_anomaly_ai",
   "action_window_ai",
   "behavioral_rule",
   "hybrid_rule_ml",

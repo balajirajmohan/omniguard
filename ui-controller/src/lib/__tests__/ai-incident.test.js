@@ -307,17 +307,17 @@ describe('Normalization of backend main commit 65737e3 response fixtures', () =>
 /* ================================================================ MANDATORY FIX 7 & 8
  * Decision source exact values & no heuristic replacement. */
 describe('Exact decision source values & no heuristic replacement', () => {
-  it('supports all 7 exact decision sources without modifying backend decision_source', () => {
-    const sources = [
+  it('supports exact decision sources without modifying backend decision_source', () => {
+    for (const src of [
       'hard_policy',
+      'command_anomaly_ai',
       'action_window_ai',
       'behavioral_rule',
       'hybrid_rule_ml',
       'ai_warning',
       'deterministic_fallback',
       'none',
-    ];
-    for (const src of sources) {
+    ]) {
       expect(OG.classifyDecisionSource({ decision_source: src })).toBe(src);
     }
   });

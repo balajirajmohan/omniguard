@@ -15,6 +15,8 @@ export OMNIGUARD_ROBOT_BACKEND="${OMNIGUARD_ROBOT_BACKEND:-isaac}"
 export ISAAC_BRIDGE_URL="${ISAAC_BRIDGE_URL:-http://127.0.0.1:8899}"
 export ISAAC_BRIDGE_TOKEN="${ISAAC_BRIDGE_TOKEN:-omniguard-bridge}"
 export OMNIGUARD_API_URL="${OMNIGUARD_API_URL:-http://127.0.0.1:8000}"
+# LLM_PROVIDER defaults to fallback when unset. If already exported in the
+# environment (or loaded via backend dotenv from .env), that value is kept.
 export LLM_PROVIDER="${LLM_PROVIDER:-fallback}"
 
 port_in_use() {
