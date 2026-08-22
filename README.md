@@ -102,7 +102,7 @@ cp .env.example .env
 # Edit .env on the machine only:
 #   LLM_PROVIDER=openrouter
 #   OPENROUTER_API_KEY=<your team key>
-#   OPENROUTER_MODEL=anthropic.claude-sonnet-4-6
+#   OPENROUTER_MODEL=anthropic/claude-sonnet-4.6
 
 # Direct OpenAI:
 # export LLM_PROVIDER=openai

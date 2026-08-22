@@ -190,6 +190,7 @@ def _security_snapshot() -> dict[str, Any]:
             "agent_status": STATE["agent_status"],
             "robot_status": STATE["robot_status"],
             "robot_speed": STATE["robot_speed"],
+            "demo_run_id": STATE.get("demo_run_id"),
             "isaac_bridge_state": STATE.get("isaac_bridge_state"),
             "mock_bridge_state": STATE.get("mock_bridge_state"),
         }
@@ -298,6 +299,8 @@ teleop_manager = TeleopManager(
 from backend.action_history import action_history
 from backend.ai_response import ai_engine
 from backend.incident_store import FEEDBACK, incident_store
+from backend.investigation_service import investigation_service
+from backend.incident_service import record_security_decision
 from backend.recovery import recovery_manager
 from backend.risk_policy import risk_policy
 from backend.action_anomaly import action_window_detector
@@ -335,6 +338,7 @@ ai_engine.bind(
     apply_identity_containment=_apply_containment,
     terminate_session=lambda _robot_id: teleop_manager.reset(),
 )
+investigation_service.bind(public_state)
 
 
 def _append_timeline(steps: list[dict[str, Any]]) -> None:
@@ -386,99 +390,109 @@ def evaluate(
     protection_enabled: bool = True,
     behavior_override: BehaviorContext | None = None,
 ) -> dict[str, Any]:
+    """Decide + contain without holding `_LOCK` during Isaac or Sonnet I/O."""
+    # --- short lock: immutable snapshot ---
     with _LOCK:
-        known_device = command.device_id == KNOWN_DEVICE
-        restricted = command.destination not in SAFE_ZONES
-        now_dt = datetime.now(timezone.utc)
-
-        behavior = behavior_tracker.snapshot(
-            agent_id=command.agent_id,
-            device_id=command.device_id,
-            now=now_dt,
-            override=behavior_override,
-        )
-
-        timeline_steps = [
-            {
-                "at": now(),
-                "step": "command_received",
-                "detail": {
-                    "destination": command.destination,
-                    "speed": command.speed,
-                    "device_id": command.device_id,
-                },
-            }
-        ]
-
-        risk, features, ai_info = detector.score(
-            speed=command.speed,
-            known_device=known_device,
-            restricted_destination=restricted,
-            commands_last_10_seconds=behavior.commands_last_10_seconds,
-            previous_failures=behavior.previous_failures,
-            hour_of_day=behavior.hour_of_day,
-            seconds_since_last_command=behavior.seconds_since_last_command,
-        )
-        timeline_steps.append(
-            {
-                "at": now(),
-                "step": "behavioral_features_calculated",
-                "detail": behavior.to_dict(),
-            }
-        )
-        timeline_steps.append(
-            {
-                "at": now(),
-                "step": "risk_scored",
-                "detail": {"risk": risk, "model": ai_info.get("model_version")},
-            }
-        )
-
-        reasons = collect_reasons(
-            credential=command.credential,
-            credential_status=STATE["credential_status"],
-            agent_id=command.agent_id,
-            device_id=command.device_id,
-            robot_id=command.robot_id,
-            destination=command.destination,
-            speed=command.speed,
-        )
-        hard_policy_would_block = any(r in HARD_VIOLATIONS for r in reasons)
-        timeline_steps.append(
-            {
-                "at": now(),
-                "step": "identity_verified",
-                "detail": {
-                    "credential_valid": command.credential == VALID_TOKEN,
-                    "reasons": reasons,
-                    "hard_policy_would_block": hard_policy_would_block,
-                },
-            }
-        )
-
+        snap = {
+            "credential_status": STATE["credential_status"],
+            "demo_run_id": STATE["demo_run_id"],
+            "agent_status": STATE["agent_status"],
+        }
         STATE["protection_enabled"] = protection_enabled
-        outcome = decide(
-            protection_enabled=protection_enabled,
-            reasons=reasons,
-            risk=risk,
-        )
 
-        decision = outcome["final_decision"]
-        actions = list(outcome["actions"])
-        timeline_steps.append(
-            {
-                "at": now(),
-                "step": "policy_decision",
-                "detail": {
-                    "final_decision": decision,
-                    "policy_decision": outcome["policy_decision"],
-                },
-            }
-        )
+    known_device = command.device_id == KNOWN_DEVICE
+    restricted = command.destination not in SAFE_ZONES
+    now_dt = datetime.now(timezone.utc)
 
-        if decision in {"BLOCK", "HOLD"} or hard_policy_would_block:
-            behavior_tracker.record_failure(command.agent_id, command.device_id)
+    behavior = behavior_tracker.snapshot(
+        agent_id=command.agent_id,
+        device_id=command.device_id,
+        now=now_dt,
+        override=behavior_override,
+    )
 
+    timeline_steps = [
+        {
+            "at": now(),
+            "step": "command_received",
+            "detail": {
+                "destination": command.destination,
+                "speed": command.speed,
+                "device_id": command.device_id,
+            },
+        }
+    ]
+
+    # --- outside lock: local ML + policy ---
+    risk, features, ai_info = detector.score(
+        speed=command.speed,
+        known_device=known_device,
+        restricted_destination=restricted,
+        commands_last_10_seconds=behavior.commands_last_10_seconds,
+        previous_failures=behavior.previous_failures,
+        hour_of_day=behavior.hour_of_day,
+        seconds_since_last_command=behavior.seconds_since_last_command,
+    )
+    timeline_steps.append(
+        {
+            "at": now(),
+            "step": "behavioral_features_calculated",
+            "detail": behavior.to_dict(),
+        }
+    )
+    timeline_steps.append(
+        {
+            "at": now(),
+            "step": "risk_scored",
+            "detail": {"risk": risk, "model": ai_info.get("model_version")},
+        }
+    )
+
+    reasons = collect_reasons(
+        credential=command.credential,
+        credential_status=snap["credential_status"],
+        agent_id=command.agent_id,
+        device_id=command.device_id,
+        robot_id=command.robot_id,
+        destination=command.destination,
+        speed=command.speed,
+    )
+    hard_policy_would_block = any(r in HARD_VIOLATIONS for r in reasons)
+    timeline_steps.append(
+        {
+            "at": now(),
+            "step": "identity_verified",
+            "detail": {
+                "credential_valid": command.credential == VALID_TOKEN,
+                "reasons": reasons,
+                "hard_policy_would_block": hard_policy_would_block,
+            },
+        }
+    )
+
+    outcome = decide(
+        protection_enabled=protection_enabled,
+        reasons=reasons,
+        risk=risk,
+    )
+    decision = outcome["final_decision"]
+    actions = list(outcome["actions"])
+    timeline_steps.append(
+        {
+            "at": now(),
+            "step": "policy_decision",
+            "detail": {
+                "final_decision": decision,
+                "policy_decision": outcome["policy_decision"],
+            },
+        }
+    )
+
+    if decision in {"BLOCK", "HOLD"} or hard_policy_would_block:
+        behavior_tracker.record_failure(command.agent_id, command.device_id)
+
+    # --- short lock: apply in-memory security/robot state (no network) ---
+    with _LOCK:
         if decision == "ALLOW":
             STATE["command_queue"].append(
                 {
@@ -489,9 +503,34 @@ def evaluate(
             )
             STATE["robot_speed"] = command.speed
             STATE["robot_status"] = "MOVING"
-            actuation = maybe_actuate_move(
-                command.robot_id, command.destination, command.speed
+        elif outcome["contain"]:
+            STATE["command_queue"].clear()
+            STATE["command_queue"].append({"action": "STOP"})
+            STATE["robot_status"] = "CONTAINED"
+            STATE["robot_speed"] = 0.0
+            STATE["credential_status"] = "REVOKED"
+            STATE["agent_status"] = "QUARANTINED"
+            STATE["last_containment_ack"] = "CONTAINMENT_REQUESTED"
+            timeline_steps.append(
+                {
+                    "at": now(),
+                    "step": "containment_requested",
+                    "detail": {"actions": list(actions)},
+                }
             )
+
+    # --- outside lock: Isaac bridge I/O ---
+    actuation = None
+    if decision == "ALLOW":
+        actuation = maybe_actuate_move(
+            command.robot_id, command.destination, command.speed
+        )
+    elif outcome["contain"]:
+        actuation = maybe_actuate_stop(command.robot_id)
+
+    containment_payload: dict[str, Any] | None = None
+    with _LOCK:
+        if decision == "ALLOW":
             if actuation is None:
                 pass
             elif not actuation.ok or actuation.stage == "FAILED":
@@ -516,29 +555,24 @@ def evaluate(
                     }
                 )
         elif outcome["contain"]:
-            STATE["command_queue"].clear()
-            STATE["command_queue"].append({"action": "STOP"})
-            STATE["robot_status"] = "CONTAINED"
-            STATE["robot_speed"] = 0.0
-            STATE["credential_status"] = "REVOKED"
-            STATE["agent_status"] = "QUARANTINED"
-            STATE["last_containment_ack"] = "CONTAINMENT_REQUESTED"
-            timeline_steps.append(
-                {
-                    "at": now(),
-                    "step": "containment_requested",
-                    "detail": {"actions": list(actions)},
-                }
-            )
-            actuation = maybe_actuate_stop(command.robot_id)
             if actuation is None:
-                # Mock / fake-robot path: request only; physical stop via poll queue.
                 actions.append("STOP_QUEUED_FOR_SIMULATOR")
                 STATE["last_containment_ack"] = "STOP_QUEUED"
+                containment_payload = {
+                    "ok": True,
+                    "acknowledged": ["ROBOT_ESTOP_REQUESTED", "STOP_BASE"],
+                    "stage": "MOCK_SKIPPED",
+                }
             elif actuation.stage == "FAILED" or not actuation.ok:
                 actions.append("ISAAC_ESTOP_FAILED")
                 STATE["robot_status"] = "CONTAINMENT_FAILED"
                 STATE["last_containment_ack"] = "ESTOP_FAILED"
+                containment_payload = {
+                    "ok": False,
+                    "failed": ["ROBOT_ESTOP_REQUESTED", "STOP_BASE"],
+                    "stage": "FAILED",
+                    "bridge": actuation.to_dict(),
+                }
                 timeline_steps.append(
                     {
                         "at": now(),
@@ -550,6 +584,12 @@ def evaluate(
                 actions.append("ISAAC_ESTOP_EXECUTED")
                 actions.append("ROBOT_STOPPED")
                 STATE["last_containment_ack"] = "ESTOP_EXECUTED"
+                containment_payload = {
+                    "ok": True,
+                    "acknowledged": ["ROBOT_ESTOP_REQUESTED", "STOP_BASE"],
+                    "stage": "EXECUTED",
+                    "bridge": actuation.to_dict(),
+                }
                 timeline_steps.append(
                     {
                         "at": now(),
@@ -560,6 +600,13 @@ def evaluate(
             else:
                 actions.append("ISAAC_ESTOP_QUEUED")
                 STATE["last_containment_ack"] = "ESTOP_QUEUED"
+                containment_payload = {
+                    "ok": True,
+                    "acknowledged": ["ROBOT_ESTOP_REQUESTED"],
+                    "unverified": ["STOP_BASE"],
+                    "stage": "QUEUED",
+                    "bridge": actuation.to_dict(),
+                }
                 timeline_steps.append(
                     {
                         "at": now(),
@@ -573,6 +620,14 @@ def evaluate(
             decision=decision,
             policy_decision=outcome["policy_decision"],
         )
+        if hard_policy_would_block:
+            decision_source = "hard_policy"
+        elif caught_by == "ai_anomaly":
+            decision_source = "command_anomaly_ai"
+        elif caught_by == "ai_warning":
+            decision_source = "ai_warning"
+        else:
+            decision_source = caught_by if caught_by != "none" else "none"
 
         event: dict[str, Any] = {
             "timestamp": now(),
@@ -597,16 +652,82 @@ def evaluate(
             "actions": actions,
             "containment_actions": actions if outcome["contain"] else [],
             "caught_by": caught_by,
+            "decision_source": decision_source,
             "timeline": list(reversed(timeline_steps)),
             "protection_enabled": protection_enabled,
+            "investigation_status": None,
+            "incident_id": None,
         }
-        if decision == "BLOCK":
-            event["incident_explanation"] = explain_incident(event)
+        if containment_payload is not None:
+            event["containment"] = containment_payload
         _append_timeline(timeline_steps)
         STATE["last_command_at"] = event["timestamp"]
         STATE["events"].insert(0, event)
         STATE["events"] = STATE["events"][:100]
-        return event
+        # Return a copy so later durable-incident enrichment is not raced.
+        response = dict(event)
+
+    # --- outside lock: durable incident + async Sonnet ---
+    if decision in {"BLOCK", "HOLD"}:
+        playbook = None
+        if hard_policy_would_block:
+            from backend.incident_classification import playbook_for_hard_reasons
+
+            playbook = playbook_for_hard_reasons(reasons)
+        elif decision == "BLOCK":
+            playbook = "CRITICAL_PHYSICAL_RISK"
+        else:
+            playbook = "SUSPICIOUS_SESSION"
+
+        enrichment = record_security_decision(
+            {
+                "final_decision": decision,
+                "decision_source": decision_source,
+                "reasons": reasons,
+                "hard_policy_would_block": hard_policy_would_block,
+                "requires_incident": True,
+                "requires_human_review": decision == "HOLD",
+                "agent_id": command.agent_id,
+                "device_id": command.device_id,
+                "robot_id": command.robot_id,
+                "destination": command.destination,
+                "speed": command.speed,
+                "policy_decision": outcome["policy_decision"],
+                "response_playbook": playbook,
+                "anomaly_risk_score": risk,
+                "anomaly_features": features,
+                "anomaly_model_version": ai_info.get("model_version"),
+                "ai_evidence": {
+                    "anomaly_risk_score": risk,
+                    "thresholds": {"warning": 0.60, "critical": 0.80},
+                    "artifact_verified": ai_info.get("artifact_verified"),
+                    "enforcement": "enforce" if AI_ENFORCE else "shadow",
+                    "model_name": ai_info.get("model_name"),
+                },
+            },
+            credential=command.credential,
+            demo_run_id=snap["demo_run_id"],
+            schedule_investigation=decision == "BLOCK",
+            contain=outcome["contain"],
+            containment_result=containment_payload,
+        )
+        response["incident_id"] = enrichment.get("incident_id")
+        response["investigation_status"] = enrichment.get("investigation_status")
+        response["decision_source"] = enrichment.get("decision_source") or decision_source
+        response["response_playbook"] = enrichment.get("response_playbook")
+        if containment_payload is not None:
+            response["containment"] = containment_payload
+        # Keep in-memory event aligned (best-effort; no long lock).
+        with _LOCK:
+            if STATE["events"] and STATE["events"][0].get("timestamp") == response.get(
+                "timestamp"
+            ):
+                STATE["events"][0]["incident_id"] = response.get("incident_id")
+                STATE["events"][0]["investigation_status"] = response.get(
+                    "investigation_status"
+                )
+
+    return response
 
 
 @app.get("/health")
@@ -927,55 +1048,24 @@ def investigate_incident(
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    max_calls = int((risk_policy.raw.get("llm") or {}).get("max_calls_per_incident", 2))
-    prior_explain = incident.get("llm_explanation") or {}
-    prior_trace = incident.get("agent_trace") or {}
-    call_count = int(prior_explain.get("call_count") or 0)
-    if call_count == 0 and prior_trace:
-        # Legacy investigations without an explicit counter still count as one call.
-        call_count = 1
-    if call_count >= max_calls:
-        return {
-            "incident_id": incident_id,
-            "investigation": prior_trace or None,
-            "explanation": prior_explain or None,
-            "ok": False,
-            "error": "LLM_CALL_LIMIT",
-            "max_calls_per_incident": max_calls,
-            "call_count": call_count,
-        }
-
-    agent = InvestigationAgent(public_state)
-    result = agent.run_v2(incident)
-    incident_store.update_fields(
-        incident_id,
-        status="INVESTIGATING",
-        agent_trace_json=result,
-    )
-    # LLM explanation once per incident (async-style: after containment already done).
-    explanation = explain_incident(
-        {
-            **incident,
-            "reasons": (incident.get("hard_policy") or {}).get("reasons")
-            or [incident.get("playbook") or "incident"],
-            "actions": ((incident.get("containment") or {}).get("acknowledged") or []),
-            "decision_source": incident.get("decision_source"),
-            "anomaly_risk_score": (incident.get("ai_evidence") or {}).get(
-                "anomaly_risk_score"
-            ),
-            "response_playbook": incident.get("playbook"),
-        }
-    )
-    explanation = dict(explanation or {})
-    explanation["call_count"] = call_count + 1
-    incident_store.update_fields(incident_id, llm_explanation_json=explanation)
+    result = investigation_service.schedule(incident_id, force=True)
+    # Wait briefly is not required — return pending/completed snapshot.
+    refreshed = incident_store.get(incident_id) or incident
+    explanation = refreshed.get("llm_explanation")
     return {
         "incident_id": incident_id,
-        "investigation": result,
+        "investigation": refreshed.get("agent_trace"),
         "explanation": explanation,
-        "ok": True,
-        "call_count": explanation["call_count"],
-        "max_calls_per_incident": max_calls,
+        "ok": result.get("ok", True),
+        "investigation_status": result.get("investigation_status")
+        or (explanation or {}).get("investigation_status")
+        or (explanation or {}).get("status"),
+        "scheduled": result.get("scheduled"),
+        "error": result.get("error"),
+        "call_count": (explanation or {}).get("call_count"),
+        "max_calls_per_incident": int(
+            (risk_policy.raw.get("llm") or {}).get("max_calls_per_incident", 2)
+        ),
     }
 
 

@@ -41,7 +41,7 @@ def test_openrouter_status_defaults_to_sonnet_4_6(monkeypatch):
     status = llm_status()
     assert status["configured"] is True
     assert status["provider"] == "openrouter"
-    assert status["model"] == "anthropic.claude-sonnet-4-6"
+    assert status["model"] == "anthropic/claude-sonnet-4.6"
     assert status["controls_robot"] is False
 
 

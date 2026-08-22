@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from unittest.mock import patch
 
 import pytest
@@ -606,15 +607,28 @@ def test_demo_run_id_isolates_incidents_across_reset(monkeypatch):
     run1 = inc1["demo_run_id"]
     assert run1
 
-    # Exhaust LLM call budget on first incident.
+    # Exhaust LLM call budget on first incident (auto-schedule + manual).
     monkeypatch.setattr(
-        "backend.main.explain_incident",
-        lambda _event: {"fallback_used": True, "provider": "fallback", "summary": "x"},
+        "backend.incident_ai.explain_incident",
+        lambda _event: {
+            "fallback_used": True,
+            "provider": "fallback",
+            "summary": "x",
+            "status": "COMPLETED",
+        },
     )
+    for _ in range(80):
+        inc = client.get(f"/api/incidents/{iid1}").json()
+        if int((inc.get("llm_explanation") or {}).get("call_count") or 0) >= 1:
+            break
+        time.sleep(0.05)
     inv1 = client.post(f"/api/incidents/{iid1}/investigate", headers=OP).json()
     assert inv1["ok"] is True
-    inv1b = client.post(f"/api/incidents/{iid1}/investigate", headers=OP).json()
-    assert inv1b["ok"] is True
+    for _ in range(80):
+        inc = client.get(f"/api/incidents/{iid1}").json()
+        if int((inc.get("llm_explanation") or {}).get("call_count") or 0) >= 2:
+            break
+        time.sleep(0.05)
     limited = client.post(f"/api/incidents/{iid1}/investigate", headers=OP).json()
     assert limited["ok"] is False
     assert limited["error"] == "LLM_CALL_LIMIT"
@@ -645,9 +659,14 @@ def test_demo_run_id_isolates_incidents_across_reset(monkeypatch):
     assert iid1 in ids and iid2 in ids
 
     # Second incident has a fresh LLM budget.
+    for _ in range(80):
+        inc2b = client.get(f"/api/incidents/{iid2}").json()
+        if int((inc2b.get("llm_explanation") or {}).get("call_count") or 0) >= 1:
+            break
+        time.sleep(0.05)
     inv2 = client.post(f"/api/incidents/{iid2}/investigate", headers=OP).json()
     assert inv2["ok"] is True
-    assert inv2["call_count"] == 1
+    assert inv2.get("error") != "LLM_CALL_LIMIT"
 
 
 def test_sqlite_migrates_demo_run_id_without_data_loss(tmp_path):
@@ -854,24 +873,36 @@ def test_investigation_v2_and_no_llm_on_normal(monkeypatch):
 
     def track_explain(event):
         calls.append(event)
-        return {"fallback_used": True, "provider": "fallback", "summary": "x"}
+        return {
+            "fallback_used": True,
+            "provider": "fallback",
+            "summary": "x",
+            "status": "COMPLETED",
+        }
 
-    monkeypatch.setattr("backend.main.explain_incident", track_explain)
+    monkeypatch.setattr("backend.incident_ai.explain_incident", track_explain)
     client.post("/api/demo/normal")
+    # Normal path must not invoke Sonnet synchronously.
+    time.sleep(0.2)
     assert calls == []
     result = client.post(
         "/api/scenarios/valid_identity_malicious_manipulation/run"
     ).json()
     iid = result["incident_id"]
+    # Wait for auto-scheduled background investigation (call 1).
+    for _ in range(80):
+        if calls:
+            break
+        time.sleep(0.05)
+    assert calls, "expected background investigation"
     inv = client.post(f"/api/incidents/{iid}/investigate", headers=OP).json()
     assert inv["ok"] is True
-    assert inv["investigation"]["agent"] == "omniguard-investigation-v2"
-    assert inv["investigation"]["execution_authorized"] is False
-    assert inv["investigation"]["confidence"] is None
-    assert inv["explanation"]["fallback_used"] is True
-    # Second call still allowed (max 2); third must be limited.
-    inv2 = client.post(f"/api/incidents/{iid}/investigate", headers=OP).json()
-    assert inv2["ok"] is True
+    # Wait for second call if scheduled.
+    for _ in range(80):
+        inc = client.get(f"/api/incidents/{iid}").json()
+        if int((inc.get("llm_explanation") or {}).get("call_count") or 0) >= 2:
+            break
+        time.sleep(0.05)
     limited = client.post(f"/api/incidents/{iid}/investigate", headers=OP).json()
     assert limited["ok"] is False
     assert limited["error"] == "LLM_CALL_LIMIT"

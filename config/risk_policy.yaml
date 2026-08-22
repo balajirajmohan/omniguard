@@ -28,6 +28,12 @@ critical_decision: BLOCK
 llm:
   max_calls_per_incident: 2
   max_agent_rounds: 5
+  max_concurrent_investigations: 2
 
 incident:
   correlation_window_seconds: 120
+
+# Repeated low-level control-protocol failures escalate to one durable incident.
+incident_policy:
+  low_level_event_window_seconds: 120
+  low_level_event_threshold: 5
