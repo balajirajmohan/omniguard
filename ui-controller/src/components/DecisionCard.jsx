@@ -209,4 +209,3 @@ export default function DecisionCard({ event, timeline }) {
     </section>
   );
 }
-

@@ -8,16 +8,9 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-logger = logging.getLogger("omniguard.actuation")
+from backend.zones import ZONE_WAYPOINTS
 
-ZONE_WAYPOINTS = {
-    "SAFE_ZONE_A": (0.0, 0.0),
-    "SAFE_ZONE_B": (10.0, 4.0),
-    "ZONE_A": (0.0, 0.0),
-    "ZONE_B": (10.0, 4.0),
-    "RESTRICTED_ZONE": (6.0, 8.0),
-    "HUMAN_ZONE": (6.0, 8.0),
-}
+logger = logging.getLogger("omniguard.actuation")
 
 
 @dataclass

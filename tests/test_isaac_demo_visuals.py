@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from backend.zones import TELEOP_ZONES
+from backend.zones import TELEOP_ZONES, ZONE_WAYPOINTS
 from isaac.demo_geometry import snap_heading_degrees, third_person_camera_eye
 from isaac.zone_visuals import (
     ROOT_PATH,
@@ -17,11 +17,7 @@ from isaac.zone_visuals import (
 def test_zone_visual_layouts_match_authoritative_teleop_zones() -> None:
     layouts = build_zone_layouts(
         TELEOP_ZONES,
-        {
-            "SAFE_ZONE_A": (0.0, 0.0),
-            "SAFE_ZONE_B": (10.0, 4.0),
-            "RESTRICTED_ZONE": (6.0, 8.0),
-        },
+        ZONE_WAYPOINTS,
     )
 
     assert ROOT_PATH == "/World/OmniGuardZones"
@@ -31,7 +27,11 @@ def test_zone_visual_layouts_match_authoritative_teleop_zones() -> None:
         "RESTRICTED_ZONE",
     ]
     assert layouts[0].label == "SAFE ZONE A"
-    assert layouts[1].waypoint == (10.0, 4.0)
+    assert layouts[0].waypoint == (0.0, -1.0)
+    assert layouts[1].waypoint == (8.0, -1.0)
+    assert layouts[2].waypoint == (6.0, 5.0)
+    assert layouts[0].y_max == 2.0
+    assert layouts[2].y_max == 7.5
     assert layouts[2].restricted is True
     assert hazard_stripe_polygons(layouts[2])
     assert not hazard_stripe_polygons(layouts[0])

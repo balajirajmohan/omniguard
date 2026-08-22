@@ -390,4 +390,3 @@ export default function IncidentDetail({ incident, cfg, onRefresh }) {
     </div>
   );
 }
-

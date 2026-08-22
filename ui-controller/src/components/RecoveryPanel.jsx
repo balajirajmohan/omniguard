@@ -206,4 +206,3 @@ export default function RecoveryPanel({ incidentId, raw, cfg, onRefresh }) {
     </div>
   );
 }
-

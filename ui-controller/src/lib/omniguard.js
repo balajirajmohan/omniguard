@@ -91,9 +91,9 @@ export const FALLBACK_TELEOP_CONFIG = {
   deadman_timeout_ms: 750,
   lease_ttl_seconds: 30,
   zones: {
-    SAFE_ZONE_A: {x_min: -5, x_max: 5, y_min: -5, y_max: 5},
-    SAFE_ZONE_B: {x_min: 5, x_max: 15, y_min: -5, y_max: 5},
-    RESTRICTED_ZONE: {x_min: 2, x_max: 12, y_min: 5, y_max: 12},
+    SAFE_ZONE_A: {x_min: -4, x_max: 4, y_min: -4, y_max: 2},
+    SAFE_ZONE_B: {x_min: 4, x_max: 12, y_min: -4, y_max: 2},
+    RESTRICTED_ZONE: {x_min: 2, x_max: 10, y_min: 2.5, y_max: 7.5},
   },
 };
 
@@ -122,6 +122,66 @@ export function zoneAt(x, y, zones) {
   const hit = entries.filter(inside);
   if (!hit.length) return "OUT_OF_BOUNDS";
   return (hit.find(([n]) => isRestrictedZone(n)) ?? hit[0])[0]; // restricted wins
+}
+
+/** Centre waypoint for autonomous duties. The backend still classifies every
+ * coordinate; this helper only chooses a point safely inside the advertised
+ * rectangle and never supplies a trusted zone name to a movement request. */
+export function zoneCenter(zones, name) {
+  const rect = zones?.[name];
+  if (!rect) return null;
+  return {
+    x: (rect.x_min + rect.x_max) / 2,
+    y: (rect.y_min + rect.y_max) / 2,
+  };
+}
+
+/** Clockwise patrol points inset from a rectangular zone boundary. The inset is
+ * deliberate: exact edges are legal today, but leaving clearance makes the duty
+ * robust to footprint/collision tolerances in the physical twin. */
+export function zonePerimeter(zones, name, inset = 0.75) {
+  const rect = zones?.[name];
+  const values = rect
+    ? [rect.x_min, rect.x_max, rect.y_min, rect.y_max, inset]
+    : [];
+  if (
+    values.length !== 5 ||
+    values.some((value) => !Number.isFinite(value)) ||
+    inset <= 0 ||
+    rect.x_max - rect.x_min <= inset * 2 ||
+    rect.y_max - rect.y_min <= inset * 2
+  ) {
+    return null;
+  }
+  const left = rect.x_min + inset;
+  const right = rect.x_max - inset;
+  const bottom = rect.y_min + inset;
+  const top = rect.y_max - inset;
+  return [
+    {id: "south-west", label: "south-west corner", x: left, y: bottom},
+    {id: "south-east", label: "south-east corner", x: right, y: bottom},
+    {id: "north-east", label: "north-east corner", x: right, y: top},
+    {id: "north-west", label: "north-west corner", x: left, y: top},
+  ];
+}
+
+/** Route descriptions used by the background duty scheduler. Unknown scenarios
+ * fail closed, and all coordinates come from backend-advertised geometry. */
+export function simulationRoute(zones, scenario) {
+  if (scenario === "zone-shuttle") {
+    const a = zoneCenter(zones, "SAFE_ZONE_A");
+    const b = zoneCenter(zones, "SAFE_ZONE_B");
+    return a && b
+      ? [
+          {id: "SAFE_ZONE_A", label: "Zone A", ...a},
+          {id: "SAFE_ZONE_B", label: "Zone B", ...b},
+        ]
+      : null;
+  }
+  if (scenario === "zone-a-perimeter") {
+    return zonePerimeter(zones, "SAFE_ZONE_A");
+  }
+  return null;
 }
 
 export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -680,5 +740,3 @@ export function normalizeRecoveryState(raw) {
     can_advance: raw.can_advance === true,
   };
 }
-
-
