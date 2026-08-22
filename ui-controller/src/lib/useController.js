@@ -16,6 +16,8 @@ import {
   rejectionReasons,
   resetBackend,
   speedFor,
+  teleopArmPreset,
+  teleopGripper,
   teleopMove,
   teleopStart,
   teleopStop,
