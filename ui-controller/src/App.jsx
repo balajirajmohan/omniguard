@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Keyboard, PlugZap, Radar, ShieldAlert } from 'lucide-react';
+import { Grab, Keyboard, PlugZap, Radar, ShieldAlert } from 'lucide-react';
 import DecisionCard from './components/DecisionCard.jsx';
 import DualSense from './components/DualSense.jsx';
 import InvestigatePanel from './components/InvestigatePanel.jsx';
@@ -25,7 +25,7 @@ export default function App() {
 
   /* Window-level, so nothing has to be clicked before the keys work:
    * WASD drives the operator, arrow keys drive the hacker. */
-  const keys = useKeyboardControl(ctl.setStick);
+  const keys = useKeyboardControl(ctl.setStick, { actions: ctl.aux });
 
   useEffect(() => { logs.record(ctl.events); }, [ctl.events, logs]);
 
@@ -54,6 +54,19 @@ export default function App() {
     rogue: Boolean(ctl.view.rogue.lease?.controlId),
   };
   const revoked = ctl.status.credential_status === 'REVOKED';
+
+  /* Isaac only reports arm/gripper after it executes a command, and mock mode
+   * never reports them, so the chip states plainly where the value came from. */
+  const manip = ctl.world.manipulator;
+  const manipulatorChip = manip
+    ? [manip.arm?.preset ?? (manip.arm ? 'joints' : null), manip.gripper?.action]
+        .filter(Boolean).join(' \u00b7 ')
+    : 'arm idle';
+  const manipulatorTitle = manip
+    ? (manip.arm?.source === 'confirmed' || manip.gripper?.source === 'confirmed'
+      ? 'Confirmed by isaac_bridge_state'
+      : 'Accepted by the backend, not yet confirmed by Isaac')
+    : 'No arm or gripper command sent yet';
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-[1680px] flex-col gap-3 p-3 xl:h-dvh xl:overflow-hidden">
@@ -114,11 +127,18 @@ export default function App() {
                       ? `${ctl.world.robot.x.toFixed(1)}, ${ctl.world.robot.y.toFixed(1)}`
                       : 'no pose'}
                   </span>
+                  {/* Arm/gripper is absent from mock_bridge_state, so say which
+                      source the read-out came from instead of implying truth. */}
+                  <span className="chip text-violet" title={manipulatorTitle}>
+                    <Grab size={9} aria-hidden="true" />
+                    {manipulatorChip}
+                  </span>
                 </div>
               </div>
               <div className="min-h-0 flex-1">
                 <WarehouseMap zones={ctl.teleopConfig.zones} robot={ctl.world.robot}
-                  target={ctl.world.target} trail={ctl.world.trail} setpoints={ctl.world.setpoints} />
+                  target={ctl.world.target} trail={ctl.world.trail} setpoints={ctl.world.setpoints}
+                  manipulator={ctl.world.manipulator} />
               </div>
             </div>
 
@@ -137,6 +157,7 @@ export default function App() {
                 <div className="min-h-0 flex-1">
                   <DualSense
                     stickRef={ctl.stickRef} onStick={ctl.setStick} lamps={lamps} leases={leases}
+                    driving={keys}
                     onArmPreset={ctl.sendArmPreset} onGripper={ctl.sendGripper}
                     onEmergencyStop={ctl.emergencyStop}
                   />

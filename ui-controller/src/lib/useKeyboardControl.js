@@ -17,6 +17,28 @@ export const BINDINGS = {
   rogue: { ArrowUp: [0, 1], ArrowLeft: [-1, 0], ArrowDown: [0, -1], ArrowRight: [1, 0] },
 };
 
+/* Arm, gripper and emergency stop, on the keyboard.
+ *
+ * Arm presets ride whichever plane holds a lease — there is one d-pad, so there
+ * is one arm control. The gripper is split per plane, like the shoulders it
+ * mirrors. `pad` names the button each key matches, so the on-screen controller
+ * and this table cannot drift apart without a test failing.
+ *
+ * Preset and action names match the sets backend/teleop.py validates against. */
+export const AUX_KEYS = {
+  1: { kind: 'arm', value: 'reach', pad: 'dpad-up' },
+  2: { kind: 'arm', value: 'stow', pad: 'dpad-down' },
+  3: { kind: 'arm', value: 'carry', pad: 'dpad-left' },
+  4: { kind: 'arm', value: 'inspect', pad: 'dpad-right' },
+  /* Gripper keys are per plane, matching the shoulders: the operator's sit by
+   * WASD, the hacker's by the arrow keys. */
+  q: { kind: 'gripper', value: 'open', panel: 'legit', pad: 'L1' },
+  e: { kind: 'gripper', value: 'close', panel: 'legit', pad: 'L2' },
+  o: { kind: 'gripper', value: 'open', panel: 'rogue', pad: 'R1' },
+  p: { kind: 'gripper', value: 'close', panel: 'rogue', pad: 'R2' },
+  ' ': { kind: 'estop', value: null, pad: 'circle' },
+};
+
 const normalise = (ev) => (ev.key.length === 1 ? ev.key.toLowerCase() : ev.key);
 
 /** Pure: held keys -> a stick vector for one plane. Extracted so the mapping is
@@ -41,9 +63,13 @@ function isTyping(target) {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
 }
 
-export function useKeyboardControl(setStick, { enabled = true } = {}) {
+export function useKeyboardControl(setStick, { enabled = true, actions } = {}) {
   const held = useRef(new Set());
   const [active, setActive] = useState({ legit: false, rogue: false });
+  /* Held in a ref so a new actions object every render does not re-subscribe
+   * the window listeners mid-keypress. */
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -65,6 +91,19 @@ export function useKeyboardControl(setStick, { enabled = true } = {}) {
       if (ev.repeat || ev.metaKey || ev.ctrlKey || ev.altKey) return;
       if (isTyping(ev.target)) return;
       const key = normalise(ev);
+
+      /* One command per physical press: ev.repeat is already rejected above, so
+       * holding the key does not stream duplicates at the OS repeat rate. */
+      const aux = AUX_KEYS[key];
+      if (aux) {
+        ev.preventDefault();        // space must not scroll or re-fire a button
+        const a = actionsRef.current;
+        if (aux.kind === 'arm') a?.armPreset?.(aux.value);
+        else if (aux.kind === 'gripper') a?.gripperFor?.(aux.panel, aux.value);
+        else a?.emergencyStop?.();
+        return;
+      }
+
       if (!isBound(key)) return;
       ev.preventDefault();          // arrows must not scroll the page
       held.current.add(key);

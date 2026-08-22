@@ -46,6 +46,12 @@ def is_allowed_teleop_point(x: float, y: float) -> tuple[bool, str]:
     return zone in ALLOWED_TELEOP_ZONES, zone
 
 
+# Authoritative arm/gripper vocabularies. teleop.py validates against these and
+# the config payload advertises them, so a client never has to hardcode the sets.
+ARM_PRESETS: tuple[str, ...] = ("stow", "carry", "reach", "inspect")
+GRIPPER_ACTIONS: tuple[str, ...] = ("open", "close")
+
+
 def teleop_config_payload(*, robot_id: str = "robot-01") -> dict[str, Any]:
     return {
         "robot_id": robot_id,
@@ -54,6 +60,8 @@ def teleop_config_payload(*, robot_id: str = "robot-01") -> dict[str, Any]:
         "deadman_timeout_ms": 750,
         "lease_ttl_seconds": 30,
         "zones": TELEOP_ZONES,
+        "arm_presets": list(ARM_PRESETS),
+        "gripper_actions": list(GRIPPER_ACTIONS),
         "boundary_rules": {
             "inclusive": True,
             "restricted_priority": True,

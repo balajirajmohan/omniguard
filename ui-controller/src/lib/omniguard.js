@@ -321,3 +321,72 @@ export function readPosition(bridgeState) {
   const y = Array.isArray(p) ? p[1] : p.y;
   return Number.isFinite(x) && Number.isFinite(y) ? {x, y} : null;
 }
+
+/* --------------------------------------------------------------- manipulator
+ * Arm and gripper state has two very different sources, and the map must not
+ * confuse them:
+ *
+ *   confirmed  isaac_bridge_state.arm / .gripper. The bridge only grows these
+ *              keys once Isaac has actually executed the command
+ *              (isaac/warehouse_robot_demo.py -> bridge.mark_executed), so they
+ *              are ground truth -- but they are absent before the first
+ *              command, and absent forever in mock mode, because
+ *              backend/main.py's mock_bridge_state has no arm/gripper fields
+ *              and nothing ever adds them.
+ *   commanded  what this UI last got an EXECUTED/QUEUED response for. The only
+ *              thing available in mock mode, and honest only if labelled.
+ *
+ * Confirmed always wins; commanded is the fallback; nothing is invented. */
+export const ARM_PRESETS = ["stow", "carry", "reach", "inspect"];
+export const GRIPPER_ACTIONS = ["open", "close"];
+
+/* Forward extension per preset, 0 (tucked) .. 1 (fully reaching), read off
+ * ARM_PRESETS_DEGREES in isaac/warehouse_robot_demo.py. Display only -- the
+ * real arm is a 7-DOF Franka; this is its top-down projection. */
+export const ARM_EXTENSION = {stow: 0.3, carry: 0.52, reach: 1, inspect: 0.74};
+/* Only "inspect" swings the base joint off-centre (panda_joint1 = +25 deg). */
+export const ARM_YAW_DEGREES = {stow: 0, carry: 0, reach: 0, inspect: 25};
+
+export function readManipulator(bridgeState, commanded = {}) {
+  const armState = bridgeState?.arm;
+  const gripperState = bridgeState?.gripper;
+
+  let arm = null;
+  if (armState?.mode === "preset" && ARM_PRESETS.includes(armState.preset)) {
+    arm = {preset: armState.preset, mode: "preset", source: "confirmed"};
+  } else if (armState?.mode === "joints") {
+    /* Explicit joint targets have no preset name; the map draws a neutral pose
+     * rather than pretending it knows which preset this resembles. */
+    arm = {preset: null, mode: "joints", source: "confirmed"};
+  } else if (ARM_PRESETS.includes(commanded.arm)) {
+    arm = {preset: commanded.arm, mode: "preset", source: "commanded"};
+  }
+
+  let gripper = null;
+  if (GRIPPER_ACTIONS.includes(gripperState?.action)) {
+    gripper = {action: gripperState.action, source: "confirmed"};
+  } else if (GRIPPER_ACTIONS.includes(commanded.gripper)) {
+    gripper = {action: commanded.gripper, source: "commanded"};
+  }
+
+  return arm || gripper ? {arm, gripper} : null;
+}
+
+/* The bridge reports no yaw, so facing is derived from motion evidence: the
+ * active target first, then the last trail segment. Falls back to +x so the
+ * arm still renders when the robot has never moved. */
+export function headingFrom(robot, target, trail) {
+  if (robot && target) {
+    const dx = target.x - robot.x;
+    const dy = target.y - robot.y;
+    if (Math.hypot(dx, dy) > 0.05) return Math.atan2(dy, dx);
+  }
+  if (trail?.length > 1) {
+    const b = trail[trail.length - 1];
+    const a = trail[trail.length - 2];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    if (Math.hypot(dx, dy) > 0.05) return Math.atan2(dy, dx);
+  }
+  return 0;
+}

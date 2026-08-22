@@ -261,12 +261,18 @@ def main():
     def apply_gripper_action(action: str) -> tuple[bool, list[str]]:
         target = GRIPPER_TARGETS[action]
         applied = []
+        # find_joint matches on suffix, so "finger_joint1" resolves to the same
+        # prim as "panda_finger_joint1". Without this the drive target is set
+        # twice per finger and the reported joint list double-counts them.
         for name in GRIPPER_JOINT_CANDIDATES:
             joint = find_joint(name)
             if joint is None:
                 continue
+            path = str(joint.GetPath())
+            if path in applied:
+                continue
             set_joint_drive_target(joint, target)
-            applied.append(str(joint.GetPath()))
+            applied.append(path)
         if not applied:
             carb.log_warn(
                 "Gripper command could not find finger joints. Available joints: "

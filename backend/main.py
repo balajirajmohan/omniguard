@@ -249,20 +249,38 @@ def _update_mock_pose(
             STATE["robot_status"] = "MOVING"
 
 
+def _update_mock_manipulator(**fields: Any) -> None:
+    """Mirror an executed arm/gripper command into the mock bridge state.
+
+    The real bridge grows `arm` / `gripper` keys only once Isaac executes a
+    command (isaac/warehouse_robot_demo.py -> mark_executed). Without this the
+    mock path never reports them at all, so /api/state could never show arm or
+    gripper state when OMNIGUARD_ROBOT_BACKEND is not "isaac".
+    """
+    with _LOCK:
+        STATE["mock_bridge_state"].update(fields)
+
+
 teleop_manager = TeleopManager(
     get_security_state=_security_snapshot,
     apply_containment=_apply_containment,
     append_event=_append_teleop_event,
     update_mock_pose=_update_mock_pose,
+    update_mock_manipulator=_update_mock_manipulator,
 )
 
 
 def reset_state() -> dict[str, Any]:
+    # Drop teleop leases first, and outside _LOCK. TeleopManager takes its own
+    # lock, and its callbacks (_append_teleop_event, _apply_containment,
+    # _security_snapshot, _update_mock_pose) re-enter _LOCK. Holding _LOCK while
+    # calling into the manager is therefore the reverse of the order every other
+    # path uses, and two concurrent requests can deadlock the whole API.
+    teleop_manager.reset()
     with _LOCK:
         STATE.clear()
         STATE.update(initial_state())
         behavior_tracker.reset()
-        teleop_manager.reset()
         return public_state_unlocked()
 
 

@@ -31,14 +31,48 @@ const TONE = {
  * D-pad geometry doubles as the hit target, so the button you press is the
  * button you see. */
 const DPAD = [
-  { preset: 'reach',   x: 68, y: 72,  w: 16, h: 15, label: 'REACH' },
-  { preset: 'stow',    x: 68, y: 101, w: 16, h: 15, label: 'STOW' },
-  { preset: 'carry',   x: 54, y: 86,  w: 15, h: 16, label: 'CARRY' },
-  { preset: 'inspect', x: 83, y: 86,  w: 15, h: 16, label: 'INSPECT' },
+  { preset: 'reach',   x: 68, y: 72,  w: 16, h: 15, label: 'REACH',   hotkey: '1',
+    lx: 76, ly: 68,  anchor: 'middle' },
+  { preset: 'stow',    x: 68, y: 101, w: 16, h: 15, label: 'STOW',    hotkey: '2',
+    lx: 76, ly: 124, anchor: 'middle' },
+  { preset: 'carry',   x: 54, y: 86,  w: 15, h: 16, label: 'CARRY',   hotkey: '3',
+    lx: 51, ly: 97,  anchor: 'end' },
+  { preset: 'inspect', x: 83, y: 86,  w: 15, h: 16, label: 'INSPECT', hotkey: '4',
+    lx: 101, ly: 97, anchor: 'start' },
 ];
 
+/* Four shoulders, split by plane exactly as the thumbsticks are: the left pair
+ * is the valid operator's gripper, the right pair is the hacker's. */
+const SHOULDERS = [
+  { key: 'l2', x: 40, y: 1, action: 'close', panel: 'legit', label: 'L2 · CLOSE', hotkey: 'E' },
+  { key: 'l1', x: 40, y: 17, action: 'open', panel: 'legit', label: 'L1 · OPEN', hotkey: 'Q' },
+  { key: 'r2', x: 254, y: 1, action: 'close', panel: 'rogue', label: 'R2 · CLOSE', hotkey: 'P' },
+  { key: 'r1', x: 254, y: 17, action: 'open', panel: 'rogue', label: 'R1 · OPEN', hotkey: 'O' },
+];
+
+const PLANE_TONE = { legit: 'var(--color-ok)', rogue: 'var(--color-bad)' };
+
+const ESTOP_HOTKEY = 'SPACE';
+
+/* A keycap drawn on the pad, so every button says which key does the same
+ * thing. Purely a label: the hit target is always the button underneath. */
+function Key({ x, y, label, on }) {
+  const w = label.length * 4.3 + 6;
+  return (
+    <g pointerEvents="none">
+      <rect x={x - w / 2} y={y - 5.5} width={w} height="11" rx="2.5"
+        fill={on ? 'var(--color-info)' : '#0d1420'}
+        stroke={on ? 'var(--color-info)' : 'rgba(255,255,255,.22)'} strokeWidth="0.7" />
+      <text x={x} y={y + 2.6} textAnchor="middle" fontSize="6"
+        fill={on ? '#04122e' : 'var(--color-dim)'} fontFamily="ui-monospace, monospace">
+        {label}
+      </text>
+    </g>
+  );
+}
+
 export default function DualSense({
-  stickRef, onStick, lamps, leases, disabled,
+  stickRef, onStick, lamps, leases, driving, disabled,
   onArmPreset, onGripper, onEmergencyStop,
 }) {
   const svgRef = useRef(null);
@@ -51,7 +85,9 @@ export default function DualSense({
   /* Arm and gripper ride a movement lease, so they act on whichever plane holds
    * one. With no lease the backend path reports NO_ACTIVE_TELEOP_LEASE, which is
    * more useful than an inert button. */
-  const target = (leases?.legit && 'legit') || (leases?.rogue && 'rogue') || activePanel || 'legit';
+  const target = (leases?.legit && 'legit') || (leases?.rogue && 'rogue')
+    || (driving?.legit && 'legit') || (driving?.rogue && 'rogue')
+    || activePanel || 'legit';
   const armed = Boolean(leases?.legit || leases?.rogue);
 
   const fire = (key, run) => (ev) => {
@@ -173,21 +209,26 @@ export default function DualSense({
         </filter>
       </defs>
 
-      {/* shoulder buttons — gripper open / close */}
-      {[
-        { key: 'open', x: 44, action: 'open', label: 'L1 · OPEN' },
-        { key: 'close', x: 250, action: 'close', label: 'R1 · CLOSE' },
-      ].map((b) => (
-        <g key={b.key} onPointerDown={fire(b.key, () => onGripper?.(target, b.action))}
-          style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}>
-          <title>{`Gripper ${b.action}${armed ? '' : ' (no active lease)'}`}</title>
-          <rect x={b.x} y="14" width="66" height="21" rx="9"
-            fill={pressed === b.key ? 'var(--color-info)' : '#222b3c'} opacity={armed ? 1 : 0.55} />
-          <text x={b.x + 33} y="28" textAnchor="middle" fontSize="7.5"
-            fill={pressed === b.key ? '#04122e' : 'var(--color-faint)'}
-            fontFamily="ui-monospace, monospace" pointerEvents="none">{b.label}</text>
-        </g>
-      ))}
+      {/* shoulders — gripper, left pair operator, right pair hacker */}
+      {SHOULDERS.map((b) => {
+        const tone = PLANE_TONE[b.panel];
+        const on = pressed === b.key;
+        return (
+          <g key={b.key} onPointerDown={fire(b.key, () => onGripper?.(b.panel, b.action))}
+            style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}>
+            <title>
+              {`Gripper ${b.action} for the ${b.panel === 'legit' ? 'valid operator' : 'hacker'}`
+                + ` — ${b.label} or key ${b.hotkey}`}
+            </title>
+            <rect x={b.x} y={b.y} width="66" height="15" rx="6"
+              fill={on ? tone : '#222b3c'} stroke={tone} strokeWidth="0.6" strokeOpacity=".5" />
+            <text x={b.x + 24} y={b.y + 10.5} textAnchor="middle" fontSize="6.6"
+              fill={on ? '#04122e' : tone} fontFamily="ui-monospace, monospace"
+              pointerEvents="none">{b.label}</text>
+            <Key x={b.x + 54} y={b.y + 7.5} label={b.hotkey} on={on} />
+          </g>
+        );
+      })}
 
       {/* body */}
       <path filter="url(#ds-shadow)" fill="url(#ds-body)" stroke="rgba(255,255,255,.09)"
@@ -214,15 +255,23 @@ export default function DualSense({
         {DPAD.map((d) => (
           <g key={d.preset} onPointerDown={fire(d.preset, () => onArmPreset?.(target, d.preset))}
             style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}>
-            <title>{`Arm ${d.preset}${armed ? '' : ' (no active lease)'}`}</title>
+            <title>{`Arm ${d.preset} — d-pad or key ${d.hotkey}`}</title>
             <rect x={d.x} y={d.y} width={d.w} height={d.h} rx="3.5"
               fill={pressed === d.preset ? 'var(--color-info)' : '#2a3346'}
-              stroke="rgba(0,0,0,.45)" opacity={armed ? 1 : 0.55} />
+              stroke="rgba(0,0,0,.45)" />
+            <text x={d.x + d.w / 2} y={d.y + d.h / 2 + 2.4} textAnchor="middle" fontSize="7"
+              fill={pressed === d.preset ? '#04122e' : 'var(--color-dim)'}
+              fontFamily="ui-monospace, monospace" pointerEvents="none">{d.hotkey}</text>
           </g>
         ))}
         <rect x="70" y="88" width="12" height="12" rx="2" fill="#1b2231" pointerEvents="none" />
+        {DPAD.map((d) => (
+          <text key={d.preset} x={d.lx} y={d.ly} textAnchor={d.anchor} fontSize="4.6"
+            fill="var(--color-faint)" fontFamily="ui-monospace, monospace"
+            pointerEvents="none">{d.label}</text>
+        ))}
       </g>
-      <text x="76" y="128" textAnchor="middle" fontSize="6" fill="var(--color-faint)"
+      <text x="76" y="136" textAnchor="middle" fontSize="6" fill="var(--color-faint)"
         fontFamily="ui-monospace, monospace">ARM</text>
 
       {/* face buttons */}
@@ -235,12 +284,13 @@ export default function DualSense({
       {/* Circle is the emergency stop, on screen and on the physical pad. */}
       <g onPointerDown={fire('estop', () => onEmergencyStop?.())}
         style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}>
-        <title>Emergency stop — ends every active lease</title>
+        <title>{`Emergency stop — Circle or ${ESTOP_HOTKEY}. Ends every active lease.`}</title>
         <circle cx="298" cy="94" r="11" fill={pressed === 'estop' ? 'var(--color-bad)' : 'transparent'} />
         <circle cx="298" cy="94" r="5.5" fill="none" stroke="var(--color-bad)" strokeWidth="1.6" />
       </g>
       <text x="298" y="118" textAnchor="middle" fontSize="7" fill="var(--color-bad)"
         fontFamily="ui-monospace, monospace">STOP</text>
+      <Key x="298" y="130" label={ESTOP_HOTKEY} on={pressed === 'estop'} />
 
       <Stick panel="legit" />
       <Stick panel="rogue" />
@@ -261,7 +311,7 @@ export default function DualSense({
       <text x="180" y="212" textAnchor="middle" fontSize="7"
         fill={armed ? 'var(--color-info)' : 'var(--color-faint)'}
         fontFamily="ui-monospace, monospace">
-        {armed ? `arm · gripper → ${target === 'legit' ? 'operator' : 'hacker'}` : 'arm · gripper need a lease'}
+        {`arm → ${target === 'legit' ? 'operator' : 'hacker'} · gripper → per shoulder`}
       </text>
     </svg>
   );
