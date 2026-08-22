@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { LogoMark, Wordmark } from './Logo';
 import { ButtonLink } from './ui/Button';
 import { useScrolled } from '../hooks/useMotionPrefs';
-import { DEMO_ROUTE } from '../config/endpoints';
+import { OPERATIONS_CONSOLE_URL } from '../config/endpoints';
 
 const links = [
   { label: 'Platform', href: '#platform' },
@@ -66,8 +66,8 @@ export function Nav() {
           >
             View Architecture
           </a>
-          <ButtonLink href={DEMO_ROUTE} size="sm" className="hidden sm:inline-flex">
-            Launch Live Demo
+          <ButtonLink href={OPERATIONS_CONSOLE_URL} size="sm" className="hidden sm:inline-flex">
+            Open Live Console
           </ButtonLink>
 
           <button
@@ -117,8 +117,8 @@ export function Nav() {
               </li>
             ))}
             <li className="mt-2 sm:hidden">
-              <ButtonLink href={DEMO_ROUTE} className="w-full">
-                Launch Live Demo
+              <ButtonLink href={OPERATIONS_CONSOLE_URL} className="w-full">
+                Open Live Operations Console
               </ButtonLink>
             </li>
           </ul>

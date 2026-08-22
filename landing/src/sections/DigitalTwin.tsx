@@ -10,18 +10,42 @@ const bullets = [
   'Capture repeatable audit evidence for engineering and governance',
 ];
 
-const traceLines: { text: string; tone: string }[] = [
-  { text: '> replay identity=fleet-agent-01 device=rogue-laptop', tone: 'text-ink-dim' },
-  { text: '  jwt.verify            OK', tone: 'text-allow' },
-  { text: '  device.binding        FAIL  (controller-01 ≠ rogue-laptop)', tone: 'text-deny' },
-  { text: '  zone.resolve(dest)    HUMAN_ZONE', tone: 'text-warn' },
-  { text: '  zone.permitted        FAIL', tone: 'text-deny' },
-  { text: '  speed.limit(1.2)      FAIL  (requested 1.80 m/s)', tone: 'text-deny' },
-  { text: '  path.intersect        HUMAN_ZONE @ 4.2 m', tone: 'text-deny' },
-  { text: '  behavior.score        0.91  CRITICAL', tone: 'text-deny' },
-  { text: '> decision              DENY', tone: 'text-deny' },
-  { text: '> contain               revoke • quarantine • estop', tone: 'text-deny' },
-  { text: '> sim.result            robot halted 1.6 m before boundary', tone: 'text-cyan' },
+const checkpoints = [
+  {
+    id: '01',
+    label: 'Identity accepted',
+    detail: 'fleet-agent-01 · JWT signature valid',
+    status: 'PASS',
+    tone: 'text-allow',
+  },
+  {
+    id: '02',
+    label: 'Origin rejected',
+    detail: 'controller-01 does not match rogue-laptop',
+    status: 'FAIL',
+    tone: 'text-deny',
+  },
+  {
+    id: '03',
+    label: 'Physical envelope crossed',
+    detail: 'RESTRICTED_ZONE at 4.2 m · requested 1.80 m/s',
+    status: 'FAIL',
+    tone: 'text-deny',
+  },
+  {
+    id: '04',
+    label: 'Behavior off profile',
+    detail: 'Isolation Forest risk 0.91 · critical',
+    status: 'RISK',
+    tone: 'text-warn',
+  },
+  {
+    id: '05',
+    label: 'Containment confirmed',
+    detail: 'credential revoked · identity quarantined · E-STOP',
+    status: 'DONE',
+    tone: 'text-cyan',
+  },
 ];
 
 export function DigitalTwin() {
@@ -41,84 +65,109 @@ export function DigitalTwin() {
       </div>
 
       <div className="relative mx-auto w-full max-w-[1200px] px-5 sm:px-8">
-        <Reveal>
-          <SectionHeading
-            eyebrow="NVIDIA OMNIVERSE + ISAAC SIM"
-            title="Prove the policy before it reaches production."
-            body="Replay compromised identities, unsafe paths, anomalous behavior, and emergency-stop actions in a photorealistic digital twin. Security and robotics teams can validate the cyber decision and its physical consequence together."
-          />
-        </Reveal>
+        <div className="grid items-end gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <Reveal>
+            <SectionHeading
+              eyebrow="NVIDIA OMNIVERSE + ISAAC SIM"
+              title="A flight recorder for every physical decision."
+              body="Replay a compromised command, inspect every security checkpoint, and verify the physical outcome in the same evidence package before the policy reaches production."
+            />
+          </Reveal>
+          <Reveal delay={0.08}>
+            <div className="border-l border-cyan/30 pl-5">
+              <p className="font-mono text-[10px] tracking-[0.16em] text-ink-faint">
+                REPLAY STATUS
+              </p>
+              <p className="mt-2 text-xl font-medium text-ink">Incident contained</p>
+              <p className="mt-1 text-sm leading-relaxed text-ink-dim">
+                Robot halted 1.6 m before the protected boundary.
+              </p>
+            </div>
+          </Reveal>
+        </div>
 
-        {/* Split screen: policy trace ⟷ simulated physical outcome */}
         <Reveal delay={0.12} className="mt-12">
-          <div className="grid grid-cols-1 overflow-hidden rounded-2xl border border-hairline-strong bg-surface/70 lg:grid-cols-2">
-            {/* Left: attack command + policy trace */}
-            <div className="border-b border-hairline lg:border-b-0 lg:border-r">
-              <PanelHeader label="ATTACK COMMAND / POLICY TRACE" tone="text-deny" />
-              <div className="p-4 sm:p-5">
-                <pre className="overflow-x-auto font-mono text-[11px] leading-[1.75] sm:text-[11.5px]">
-                  {traceLines.map((l) => (
-                    <div key={l.text} className={l.tone}>
-                      {l.text}
-                    </div>
-                  ))}
-                </pre>
+          <div className="overflow-hidden rounded-2xl border border-hairline-strong bg-surface/75">
+            <div className="flex flex-wrap items-center gap-3 border-b border-hairline bg-surface-2/55 px-5 py-4 sm:px-6">
+              <span className="font-mono text-[10px] tracking-[0.16em] text-cyan">
+                INCIDENT FLIGHT RECORDER
+              </span>
+              <span className="font-mono text-[10px] text-ink-faint">REPLAY / 007</span>
+              <div className="ml-auto flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-allow" />
+                <span className="font-mono text-[10px] tracking-[0.12em] text-ink-dim">
+                  EVIDENCE SEALED
+                </span>
               </div>
             </div>
 
-            {/* Right: simulated physical outcome */}
-            <div>
-              <PanelHeader label="ISAAC SIM / PHYSICAL OUTCOME" tone="text-cyan" />
-              <div className="p-4 sm:p-5">
-                <SimStopScene />
+            <div className="grid lg:grid-cols-[0.82fr_1.18fr]">
+              <div className="border-b border-hairline p-5 sm:p-7 lg:border-b-0 lg:border-r">
+                <div className="rounded-lg border border-hairline bg-graphite/70 px-4 py-3">
+                  <p className="font-mono text-[9px] tracking-[0.14em] text-ink-faint">
+                    REPLAYED COMMAND
+                  </p>
+                  <p className="mt-2 font-mono text-[11px] leading-relaxed text-ink-dim">
+                    fleet-agent-01 / rogue-laptop / MOVE RESTRICTED_ZONE / 1.80 m/s
+                  </p>
+                </div>
+
+                <ol className="relative mt-6 space-y-0 before:absolute before:bottom-5 before:left-[13px] before:top-5 before:w-px before:bg-hairline-strong">
+                  {checkpoints.map((checkpoint) => (
+                    <li key={checkpoint.id} className="relative grid grid-cols-[28px_1fr_auto] gap-3 py-3.5">
+                      <span className="relative z-10 grid h-7 w-7 place-items-center rounded-full border border-hairline-strong bg-surface-2 font-mono text-[9px] text-ink-faint">
+                        {checkpoint.id}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-[13.5px] font-medium text-ink">{checkpoint.label}</p>
+                        <p className="mt-1 font-mono text-[9.5px] leading-relaxed text-ink-faint">
+                          {checkpoint.detail}
+                        </p>
+                      </div>
+                      <span className={`pt-0.5 font-mono text-[9px] tracking-[0.12em] ${checkpoint.tone}`}>
+                        {checkpoint.status}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+
+              <div className="relative min-h-[28rem] p-5 sm:p-7">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="font-mono text-[9px] tracking-[0.14em] text-ink-faint">
+                      PHYSICAL OUTCOME / ISAAC SIM
+                    </p>
+                    <p className="mt-1.5 text-base font-medium text-ink">Boundary interception</p>
+                  </div>
+                  <Chip tone="deny">DENIED · 42 ms</Chip>
+                </div>
+                <div className="mt-3">
+                  <SimStopScene />
+                </div>
               </div>
             </div>
           </div>
         </Reveal>
 
         <Reveal delay={0.2}>
-          <ul className="mt-10 grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
-            {bullets.map((b) => (
-              <li key={b} className="flex items-start gap-3">
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  className="mt-0.5 shrink-0 text-cyan"
-                  aria-hidden="true"
-                >
-                  <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.2" opacity="0.45" />
-                  <path
-                    d="M4.8 8.2 7 10.4l4.2-4.6"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-                <span className="text-[14.5px] leading-relaxed text-ink-dim">{b}</span>
+          <ul className="mt-6 grid grid-cols-1 overflow-hidden rounded-xl border border-hairline bg-surface/45 sm:grid-cols-2 lg:grid-cols-4">
+            {bullets.map((bullet, index) => (
+              <li
+                key={bullet}
+                className="border-b border-hairline p-5 last:border-b-0 sm:[&:nth-child(odd)]:border-r lg:border-b-0 lg:border-r lg:last:border-r-0"
+              >
+                <span className="font-mono text-[9px] tracking-[0.14em] text-cyan/70">
+                  0{index + 1}
+                </span>
+                <p className="mt-2 text-[13px] leading-relaxed text-ink-dim">{bullet}</p>
               </li>
             ))}
           </ul>
         </Reveal>
 
-        <Reveal delay={0.26}>
-          <p className="mt-8 font-mono text-[10.5px] leading-relaxed text-ink-faint">
-            NVIDIA, Omniverse, and Isaac Sim are referenced as integration targets. Names used
-            textually; no affiliation or endorsement is implied.
-          </p>
-        </Reveal>
       </div>
     </Section>
-  );
-}
-
-function PanelHeader({ label, tone }: { label: string; tone: string }) {
-  return (
-    <div className="flex items-center gap-2 border-b border-hairline bg-surface-2/60 px-4 py-2.5 sm:px-5">
-      <span className={`font-mono text-[10px] tracking-[0.16em] ${tone}`}>{label}</span>
-    </div>
   );
 }
 
@@ -129,7 +178,7 @@ function SimStopScene() {
   const [hx, hy] = iso(6.4, 6.3, 6);
 
   return (
-    <div className="relative aspect-[4/3] w-full">
+    <div className="relative aspect-[16/10] w-full">
       <svg viewBox="0 0 460 345" className="absolute inset-0 h-full w-full" aria-hidden="true">
         <defs>
           <linearGradient id="og-sim-floor" x1="0" y1="0" x2="0" y2="1">
@@ -203,12 +252,9 @@ function SimStopScene() {
         </g>
       </svg>
 
-      <div className="absolute left-3 top-3">
-        <Chip tone="deny">HALTED 1.6 m BEFORE BOUNDARY</Chip>
-      </div>
       <div className="absolute bottom-3 left-3 flex flex-wrap gap-1.5">
-        <Chip tone="cyan">sim tick 4182</Chip>
-        <Chip>replay #7</Chip>
+        <Chip tone="cyan">HALTED 1.6 m BEFORE BOUNDARY</Chip>
+        <Chip>SIM TICK 4182</Chip>
       </div>
     </div>
   );

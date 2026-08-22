@@ -49,7 +49,7 @@ export function RiskMeter({ value, active }: { value: number; active: boolean })
 
       <div className="mt-2 flex items-baseline justify-between">
         <span className={`tabnum font-mono text-2xl font-semibold ${band.text}`}>
-          {active ? value.toFixed(2) : '—.—'}
+          {active ? value.toFixed(2) : 'N/A'}
         </span>
         <span className="font-mono text-[10px] text-ink-faint">threshold 0.80</span>
       </div>

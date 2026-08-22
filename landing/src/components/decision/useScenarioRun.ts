@@ -9,8 +9,8 @@ const STAGE_MS = 480;
  * `Containment confirmed`. Under reduced motion the full trace is revealed at
  * once so no information depends on animation.
  *
- * Swap the internal timer for a streamed API response (POST /command) without
- * changing any consumer.
+ * This hook intentionally drives the scripted product preview. Live operations
+ * are handled by the separately deployed operations console.
  */
 export function useScenarioRun(scenario: Scenario, runKey: number = 0) {
   const reduced = useReducedMotion();

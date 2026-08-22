@@ -1,6 +1,6 @@
 /**
  * OmniGuard mark: a shield built from a hexagon, with a robot motion path
- * traced through it — identity boundary + movement in one glyph.
+ * traced through it: identity boundary + movement in one glyph.
  */
 export function LogoMark({ size = 28, className = '' }: { size?: number; className?: string }) {
   return (

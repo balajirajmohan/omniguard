@@ -14,7 +14,7 @@ const rows: { capability: string; values: [Support, Support, Support, Support] }
   { capability: 'Validates identity', values: ['yes', 'partial', 'no', 'yes'] },
   { capability: 'Understands destination and path', values: ['no', 'partial', 'partial', 'yes'] },
   { capability: 'Uses live robot/world state', values: ['no', 'no', 'partial', 'yes'] },
-  { capability: 'Learns command behavior', values: ['no', 'no', 'partial', 'yes'] },
+  { capability: 'Detects deviations from a versioned behavioral baseline', values: ['no', 'no', 'partial', 'yes'] },
   { capability: 'Simulates controls in a digital twin', values: ['no', 'no', 'no', 'yes'] },
   { capability: 'Revokes and quarantines identities', values: ['partial', 'no', 'no', 'yes'] },
   { capability: 'Triggers robot emergency stop', values: ['no', 'no', 'partial', 'yes'] },
@@ -114,7 +114,7 @@ function SupportMark({
     value === 'yes' ? 'Supported' : value === 'partial' ? 'Partial support' : 'Not addressed';
 
   return (
-    <span className="inline-flex" title={`${column}: ${text} — ${capability}`}>
+    <span className="inline-flex" title={`${column}: ${text}. ${capability}`}>
       <span className="sr-only">{text}</span>
       {value === 'yes' ? <CheckMark /> : value === 'partial' ? <PartialMark /> : <NoMark />}
     </span>

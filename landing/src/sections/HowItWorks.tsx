@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Reveal } from '../components/ui/Reveal';
-import { Chip, Section, SectionHeading, type Tone } from '../components/ui/Primitives';
+import { Chip, Section, SectionHeading } from '../components/ui/Primitives';
 import { useReducedMotion } from '../hooks/useMotionPrefs';
 
 interface Layer {
@@ -8,8 +8,7 @@ interface Layer {
   kicker: string;
   title: string;
   body: string;
-  chips: { label: string; tone: Tone }[];
-  tone: Tone;
+  chips: string[];
   icon: ReactNode;
 }
 
@@ -19,49 +18,34 @@ const layers: Layer[] = [
     kicker: 'VERIFY',
     title: 'Machine identity and device trust',
     body: 'Validate signed credentials, delegated robot grants, controller binding, freshness, and replay protection.',
-    chips: [
-      { label: 'JWT verified', tone: 'allow' },
-      { label: 'Device signature verified', tone: 'allow' },
-      { label: 'Robot grant confirmed', tone: 'allow' },
-    ],
-    tone: 'cyan',
+    chips: ['Credential verified', 'Controller binding matched', 'Robot grant confirmed'],
     icon: <KeyIcon />,
   },
   {
     step: '02',
     kicker: 'REASON',
     title: 'Policy plus behavioral AI',
-    body: 'Evaluate destination, path, speed, live operating context, and deviations from learned fleet behavior.',
-    chips: [
-      { label: 'Path crosses HUMAN_ZONE', tone: 'deny' },
-      { label: 'Speed ratio 0.97', tone: 'warn' },
-      { label: 'Anomaly risk 0.96', tone: 'deny' },
-    ],
-    tone: 'warn',
+    body: 'Evaluate destination, path, speed, live operating context, and deviations from a versioned behavioral baseline.',
+    chips: ['Restricted destination', 'Speed above 1.5 m/s', 'Effective risk 0.92'],
     icon: <BrainIcon />,
   },
   {
     step: '03',
     kicker: 'CONTAIN',
     title: 'Stop the blast radius',
-    body: 'Deny unsafe commands and automatically revoke credentials, quarantine identities, and emergency-stop moving robots.',
-    chips: [
-      { label: 'Command denied', tone: 'deny' },
-      { label: 'Credential revoked', tone: 'deny' },
-      { label: 'E-STOP confirmed', tone: 'deny' },
-    ],
-    tone: 'deny',
+    body: 'Block unsafe commands, revoke credentials, quarantine identities, and request a robot base stop.',
+    chips: ['Command blocked', 'Credential revoked', 'Base stop acknowledged'],
     icon: <StopIcon />,
   },
+  {
+    step: '04',
+    kicker: 'INVESTIGATE',
+    title: 'Explain and recover safely',
+    body: 'Create a durable incident, then ask Sonnet asynchronously to explain evidence, physical impact, and recommended response. The LLM never controls the robot.',
+    chips: ['INC-* created', 'Investigation pending', 'Human-approved recovery'],
+    icon: <BrainIcon />,
+  },
 ];
-
-const accent: Record<Tone, { border: string; glow: string; text: string }> = {
-  neutral: { border: 'hover:border-hairline-strong', glow: 'from-ink-faint/40', text: 'text-ink-dim' },
-  cyan: { border: 'hover:border-cyan/45', glow: 'from-cyan/60', text: 'text-cyan' },
-  allow: { border: 'hover:border-allow/45', glow: 'from-allow/60', text: 'text-allow' },
-  warn: { border: 'hover:border-warn/45', glow: 'from-warn/60', text: 'text-warn' },
-  deny: { border: 'hover:border-deny/50', glow: 'from-deny/60', text: 'text-deny' },
-};
 
 export function HowItWorks() {
   const reduced = useReducedMotion();
@@ -71,19 +55,19 @@ export function HowItWorks() {
       <Reveal>
         <SectionHeading
           eyebrow="HOW IT WORKS"
-          title="One decision plane. Three layers of protection."
-          body="Every command crosses the same path. Deterministic checks run first, behavioral evidence is layered on top, and containment is part of the same decision — not a separate runbook."
+          title="One decision plane. Four accountable stages."
+          body="Every command follows the same path. Deterministic checks run first, behavioral evidence is layered on top, containment is acknowledged, and investigation happens asynchronously."
         />
       </Reveal>
 
       <div className="relative mt-14">
-        {/* Animated flow connecting the three cards. */}
+        {/* Animated flow connecting the four cards. */}
         <div
           aria-hidden="true"
           className="absolute left-1/2 top-0 hidden h-px w-[calc(100%-8rem)] -translate-x-1/2 lg:block"
           style={{ top: '3.25rem' }}
         >
-          <div className="h-px w-full bg-gradient-to-r from-cyan/40 via-warn/40 to-deny/40 opacity-50" />
+          <div className="h-px w-full bg-gradient-to-r from-transparent via-cyan/30 to-transparent" />
           {!reduced && (
             <div
               className="absolute -top-px h-px w-24 bg-gradient-to-r from-transparent via-cyan-bright to-transparent"
@@ -92,26 +76,26 @@ export function HowItWorks() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3 lg:gap-6">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4 lg:gap-6">
           {layers.map((l, i) => (
             <Reveal as="article" key={l.step} delay={i * 0.1}>
               <div
-                className={`group relative flex h-full flex-col overflow-hidden rounded-xl border border-hairline bg-surface/70 p-6 transition-colors duration-300 sm:p-7 ${accent[l.tone].border}`}
+                className="group relative flex h-full flex-col overflow-hidden rounded-xl border border-hairline bg-surface/70 p-6 transition-colors duration-300 hover:border-hairline-strong sm:p-7"
               >
-                {/* Status-based border illumination on hover. */}
+                {/* One restrained system accent keeps the three stages cohesive. */}
                 <div
                   aria-hidden="true"
-                  className={`absolute inset-x-0 top-0 h-px bg-gradient-to-r to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100 ${accent[l.tone].glow}`}
+                  className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-cyan/45 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100"
                 />
 
                 <div className="mb-6 flex items-center gap-3">
                   <div
-                    className={`grid h-11 w-11 place-items-center rounded-lg border border-hairline-strong bg-surface-2 ${accent[l.tone].text}`}
+                    className="grid h-11 w-11 place-items-center rounded-lg border border-hairline-strong bg-surface-2 text-cyan"
                   >
                     {l.icon}
                   </div>
                   <div>
-                    <p className={`font-mono text-[11px] tracking-[0.18em] ${accent[l.tone].text}`}>
+                    <p className="font-mono text-[11px] tracking-[0.18em] text-ink-dim">
                       {l.kicker}
                     </p>
                     <p className="font-mono text-[10px] text-ink-faint">STAGE {l.step}</p>
@@ -128,9 +112,9 @@ export function HowItWorks() {
                     EXAMPLE EVIDENCE
                   </p>
                   <div className="flex flex-wrap gap-1.5">
-                    {l.chips.map((c) => (
-                      <Chip key={c.label} tone={c.tone}>
-                        {c.label}
+                    {l.chips.map((label) => (
+                      <Chip key={label}>
+                        {label}
                       </Chip>
                     ))}
                   </div>

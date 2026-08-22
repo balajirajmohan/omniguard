@@ -16,7 +16,7 @@ const groups = [
       { label: 'Architecture', href: '#architecture' },
       { label: 'Digital Twin', href: '#digital-twin' },
       { label: 'Documentation', href: '#', placeholder: true },
-      { label: 'GitLab / Repository', href: '#', placeholder: true },
+      { label: 'GitHub Repository', href: 'https://github.com/balajirajmohan/omniguard/' },
     ],
   },
 ];
@@ -35,7 +35,7 @@ export function Footer() {
               ZERO TRUST FOR PHYSICAL AI
             </p>
             <p className="mt-5 max-w-sm text-[13px] leading-relaxed text-ink-faint">
-              Policy-as-code for actions that move machines—not just data.
+              Policy-as-code for actions that move machines, not just data.
             </p>
           </div>
 
@@ -49,6 +49,8 @@ export function Footer() {
                   <li key={l.label}>
                     <a
                       href={l.href}
+                      target={l.href.startsWith('https://') ? '_blank' : undefined}
+                      rel={l.href.startsWith('https://') ? 'noreferrer' : undefined}
                       className="inline-flex items-center gap-1.5 text-[13.5px] text-ink-dim transition-colors duration-200 hover:text-cyan-bright"
                     >
                       {l.label}
@@ -63,10 +65,7 @@ export function Footer() {
           ))}
         </div>
 
-        <div className="mt-12 flex flex-col gap-3 border-t border-hairline pt-6 sm:flex-row sm:items-center sm:justify-between">
-          <p className="font-mono text-[11px] text-warn/80">
-            Hackathon prototype — not certified for production safety use.
-          </p>
+        <div className="mt-12 flex justify-end border-t border-hairline pt-6">
           <p className="font-mono text-[11px] text-ink-faint">
             © {new Date().getFullYear()} OmniGuard
           </p>

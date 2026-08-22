@@ -5,9 +5,9 @@
  * Values are demo telemetry, not measured production results.
  */
 
-export type Outcome = 'ALLOW' | 'ALLOW_CONSTRAINED' | 'DENY' | 'ESTOP';
+export type Outcome = 'ALLOW' | 'ALLOW_CONSTRAINED' | 'BLOCK' | 'ESTOP';
 
-export type ScenarioId = 'normal' | 'stolen' | 'anomaly' | 'sensor';
+export type ScenarioId = 'normal' | 'stolen' | 'anomaly' | 'manipulation';
 
 export interface TraceStage {
   /** Short label shown in the decision trace. */
@@ -24,8 +24,8 @@ export interface Field {
 }
 
 /**
- * A policy reason carries its own verdict. Never infer it from the label —
- * `ZONE_PERMITTED` and `ZONE_NOT_PERMITTED` share a substring but are opposites.
+ * A policy reason carries its own verdict. Never infer it from the label;
+ * Reason codes are rendered exactly as returned by the backend.
  */
 export interface PolicyReason {
   code: string;
@@ -50,7 +50,7 @@ export interface Scenario {
   stages: TraceStage[];
 }
 
-export const POLICY_VERSION = 'v1.4';
+export const POLICY_VERSION = 'action-risk-policy-v1';
 
 export const scenarios: Scenario[] = [
   {
@@ -78,10 +78,10 @@ export const scenarios: Scenario[] = [
     latencyMs: 31,
     stages: [
       { label: 'Command received', detail: 'MOVE robot-01 → ZONE_B', status: 'info' },
-      { label: 'Identity verified', detail: 'JWT valid • device signature matched', status: 'pass' },
+      { label: 'Identity verified', detail: 'credential verified • controller binding matched', status: 'pass' },
       { label: 'Physical policy evaluated', detail: 'path clear • speed ratio 0.53', status: 'pass' },
       { label: 'AI behavior scored', detail: 'anomaly risk 0.08 • nominal', status: 'pass' },
-      { label: 'Decision issued', detail: 'ALLOW • policy v1.4', status: 'pass' },
+      { label: 'Decision issued', detail: 'ALLOW • action-risk-policy-v1', status: 'pass' },
       { label: 'Containment confirmed', detail: 'not required', status: 'info' },
     ],
   },
@@ -89,33 +89,33 @@ export const scenarios: Scenario[] = [
     id: 'stolen',
     name: 'Stolen Credential',
     blurb: 'A valid, unexpired credential replayed from an unbound controller.',
-    command: 'MOVE → HUMAN_ZONE • 1.8 m/s',
+    command: 'MOVE → RESTRICTED_ZONE • 1.8 m/s',
     fields: [
       { key: 'identity', value: 'fleet-agent-01', status: 'warn' },
       { key: 'device', value: 'rogue-laptop', status: 'fail' },
       { key: 'robot', value: 'robot-01', status: 'info' },
-      { key: 'destination', value: 'HUMAN_ZONE', status: 'fail' },
+      { key: 'destination', value: 'RESTRICTED_ZONE', status: 'fail' },
       { key: 'speed', value: '1.8 m/s', status: 'fail' },
       { key: 'policy', value: 'FAIL', status: 'fail' },
     ],
     policyReasons: [
-      { code: 'DEVICE_MISMATCH', status: 'fail' },
-      { code: 'ZONE_NOT_PERMITTED', status: 'fail' },
-      { code: 'SPEED_EXCEEDED', status: 'fail' },
+      { code: 'UNKNOWN_DEVICE', status: 'fail' },
+      { code: 'RESTRICTED_DESTINATION', status: 'fail' },
+      { code: 'EXCESSIVE_SPEED', status: 'fail' },
     ],
     aiRisk: 0.91,
-    outcome: 'DENY',
-    outcomeLabel: 'DENY + CONTAIN',
+    outcome: 'BLOCK',
+    outcomeLabel: 'BLOCK + CONTAIN',
     note: 'The signature is genuine. The physical request is not survivable.',
-    containment: ['Credential revoked', 'Identity quarantined', 'Robot E-STOP engaged'],
+    containment: ['Credential revoked', 'Identity quarantined', 'Robot base stop acknowledged'],
     latencyMs: 42,
     stages: [
-      { label: 'Command received', detail: 'MOVE robot-01 → HUMAN_ZONE', status: 'info' },
-      { label: 'Identity verified', detail: 'JWT valid • device binding FAILED', status: 'fail' },
-      { label: 'Physical policy evaluated', detail: 'zone denied • speed 1.8 > 1.2 m/s', status: 'fail' },
+      { label: 'Command received', detail: 'MOVE robot-01 → RESTRICTED_ZONE', status: 'info' },
+      { label: 'Identity verified', detail: 'credential valid • controller binding failed', status: 'fail' },
+      { label: 'Physical policy evaluated', detail: 'restricted destination • speed 1.8 > 1.5 m/s', status: 'fail' },
       { label: 'AI behavior scored', detail: 'anomaly risk 0.91 • off-profile origin', status: 'fail' },
-      { label: 'Decision issued', detail: 'DENY • 3 hard policy violations', status: 'fail' },
-      { label: 'Containment confirmed', detail: 'revoked • quarantined • E-STOP', status: 'fail' },
+      { label: 'Decision issued', detail: 'BLOCK • 3 hard policy violations', status: 'fail' },
+      { label: 'Containment confirmed', detail: 'revoked • quarantined • base stop acknowledged', status: 'fail' },
     ],
   },
   {
@@ -137,51 +137,51 @@ export const scenarios: Scenario[] = [
       { code: 'BURST_REPETITION', status: 'fail' },
     ],
     aiRisk: 0.96,
-    outcome: 'DENY',
-    outcomeLabel: 'CRITICAL ANOMALY → DENY',
+    outcome: 'BLOCK',
+    outcomeLabel: 'CRITICAL ANOMALY → BLOCK',
     note: 'Every individual field is allowed. The behavioral combination is not.',
     containment: ['Command denied', 'Identity flagged for review', 'Session rate-limited'],
     latencyMs: 38,
     stages: [
       { label: 'Command received', detail: '7th MOVE in 900 ms window', status: 'info' },
-      { label: 'Identity verified', detail: 'JWT valid • device signature matched', status: 'pass' },
+      { label: 'Identity verified', detail: 'credential verified • controller binding matched', status: 'pass' },
       { label: 'Physical policy evaluated', detail: 'all deterministic checks PASS', status: 'pass' },
       { label: 'AI behavior scored', detail: 'anomaly risk 0.96 • critical', status: 'fail' },
-      { label: 'Decision issued', detail: 'DENY • behavioral risk evidence', status: 'fail' },
+      { label: 'Decision issued', detail: 'BLOCK • behavioral risk evidence', status: 'fail' },
       { label: 'Containment confirmed', detail: 'session rate-limited • flagged', status: 'warn' },
     ],
   },
   {
-    id: 'sensor',
-    name: 'Physical Sensor Failure',
-    blurb: 'Runtime force/torque telemetry classified mid-motion.',
-    command: 'IN-FLIGHT TELEMETRY • robot-01',
+    id: 'manipulation',
+    name: 'Valid Identity: Malicious Manipulation',
+    blurb: 'A valid credential and known controller issue a malicious command sequence.',
+    command: 'MANIPULATE ARM • VALID IDENTITY',
     fields: [
-      { key: 'telemetry_window', value: '15 samples • 315 ms', status: 'info' },
-      { key: 'model_assessment', value: 'COLLISION / OBSTRUCTION SUSPECTED', status: 'fail' },
-      { key: 'failure_probability', value: '0.94', status: 'fail' },
-      { key: 'robot_state', value: 'MOVING → HALTING', status: 'warn' },
-      { key: 'force_peak', value: '38.2 N • +410%', status: 'fail' },
-      { key: 'nearby_humans', value: '2 detected', status: 'warn' },
+      { key: 'credential', value: 'VALID', status: 'pass' },
+      { key: 'device', value: 'KNOWN', status: 'pass' },
+      { key: 'isolation_forest_score', value: '0.49', status: 'warn' },
+      { key: 'behavioral_sequence_score', value: '0.92', status: 'fail' },
+      { key: 'effective_risk', value: '0.92', status: 'fail' },
+      { key: 'incident', value: 'DURABLE INC-*', status: 'info' },
     ],
     policyReasons: [
-      { code: 'FORCE_THRESHOLD_EXCEEDED', status: 'fail' },
-      { code: 'OBSTRUCTION_SUSPECTED', status: 'fail' },
-      { code: 'HUMANS_IN_RADIUS', status: 'warn' },
+      { code: 'CREDENTIAL_VALID', status: 'pass' },
+      { code: 'CONTROLLER_BINDING_MATCHED', status: 'pass' },
+      { code: 'BEHAVIORAL_SEQUENCE_ANOMALY', status: 'fail' },
     ],
-    aiRisk: 0.94,
-    outcome: 'ESTOP',
-    outcomeLabel: 'E-STOP',
-    note: 'Containment is not only about commands. Physical outcomes are governed too.',
-    containment: ['Motion halted', 'Task suspended', 'Incident evidence sealed'],
-    latencyMs: 27,
+    aiRisk: 0.92,
+    outcome: 'BLOCK',
+    outcomeLabel: 'BLOCK + CONTAIN',
+    note: 'The LLM investigates after containment and never controls the robot.',
+    containment: ['Robot base stop acknowledged', 'Durable incident created', 'Sonnet investigation pending'],
+    latencyMs: 42,
     stages: [
-      { label: 'Command received', detail: 'telemetry stream • 15 samples', status: 'info' },
-      { label: 'Identity verified', detail: 'robot-01 attested', status: 'pass' },
-      { label: 'Physical policy evaluated', detail: 'force peak 38.2 N exceeds envelope', status: 'fail' },
-      { label: 'AI behavior scored', detail: 'failure probability 0.94', status: 'fail' },
-      { label: 'Decision issued', detail: 'E-STOP • immediate halt', status: 'fail' },
-      { label: 'Containment confirmed', detail: 'motion halted in 27 ms', status: 'fail' },
+      { label: 'Command received', detail: 'valid identity • known controller', status: 'info' },
+      { label: 'Identity verified', detail: 'credential verified • controller binding matched', status: 'pass' },
+      { label: 'Behavioral baseline scored', detail: 'IsolationForest 0.49 • sequence 0.92', status: 'fail' },
+      { label: 'Decision issued', detail: 'BLOCK • effective risk 0.92', status: 'fail' },
+      { label: 'Containment acknowledged', detail: 'robot base stopped • INC-* created', status: 'fail' },
+      { label: 'Sonnet investigation', detail: 'PENDING • asynchronous and read-only', status: 'info' },
     ],
   },
 ];
@@ -223,28 +223,28 @@ export const incidents: IncidentRecord[] = [
     id: 'INC-2291',
     time: '14:02:11.418',
     identity: 'fleet-agent-01',
-    summary: 'Replayed credential from rogue-laptop → HUMAN_ZONE',
-    outcome: 'DENY',
+    summary: 'Replayed credential from rogue-laptop → RESTRICTED_ZONE',
+    outcome: 'BLOCK',
   },
   {
     id: 'INC-2288',
     time: '13:47:52.006',
     identity: 'fleet-agent-04',
-    summary: 'Command burst ×7 in 900 ms — behavioral anomaly 0.96',
-    outcome: 'DENY',
+    summary: 'Command burst ×7 in 900 ms; behavioral anomaly 0.96',
+    outcome: 'BLOCK',
   },
   {
     id: 'INC-2284',
     time: '13:19:03.771',
-    identity: 'robot-01',
-    summary: 'Force/torque spike 38.2 N — obstruction suspected',
-    outcome: 'ESTOP',
+    identity: 'fleet-agent-01',
+    summary: 'Valid identity manipulation; effective behavioral risk 0.92',
+    outcome: 'BLOCK',
   },
   {
     id: 'INC-2280',
     time: '12:58:40.229',
     identity: 'fleet-agent-02',
-    summary: 'Speed 1.35 m/s near dock — capped to 0.9 m/s',
+    summary: 'Speed 1.35 m/s near dock; capped to 0.9 m/s',
     outcome: 'ALLOW_CONSTRAINED',
   },
   {
@@ -267,7 +267,7 @@ export const robots = [
   { id: 'robot-01', model: 'AMR-240', zone: 'ZONE_A', speed: '0.00 m/s', state: 'E-STOP' },
   { id: 'robot-02', model: 'AMR-240', zone: 'ZONE_B', speed: '0.74 m/s', state: 'ACTIVE' },
   { id: 'robot-03', model: 'AMR-180', zone: 'DOCK', speed: '0.31 m/s', state: 'ACTIVE' },
-  { id: 'robot-04', model: 'ARM-C7', zone: 'CELL_3', speed: '—', state: 'IDLE' },
+  { id: 'robot-04', model: 'ARM-C7', zone: 'CELL_3', speed: 'N/A', state: 'IDLE' },
 ];
 
 export const policies = [

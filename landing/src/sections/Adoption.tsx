@@ -1,13 +1,13 @@
 import { Reveal } from '../components/ui/Reveal';
 import { Section, SectionHeading } from '../components/ui/Primitives';
 import { ArrowRight, ButtonLink } from '../components/ui/Button';
-import { DEMO_ROUTE } from '../config/endpoints';
+import { OPERATIONS_CONSOLE_URL } from '../config/endpoints';
 
 const steps = [
   {
     n: '01',
     name: 'Observe',
-    body: 'Deploy in shadow mode and learn normal command behavior without blocking operations.',
+    body: 'Collect baseline telemetry and score commands in shadow mode without blocking operations.',
     tone: 'text-cyan border-cyan/40',
     bar: 'from-cyan/60',
   },
@@ -61,11 +61,11 @@ export function Adoption() {
         <div className="mt-10 rounded-xl border border-hairline-strong bg-surface-2/50 p-6 sm:p-8">
           <p className="max-w-3xl text-[16px] font-medium leading-relaxed text-ink sm:text-[17px]">
             OmniGuard gives security teams control, robotics teams deterministic safety, and
-            operations teams evidence—without replacing the fleet platform.
+            operations teams evidence without replacing the fleet platform.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
-            <ButtonLink href={DEMO_ROUTE}>
-              Launch Live Demo
+            <ButtonLink href={OPERATIONS_CONSOLE_URL}>
+              Open Live Operations Console
               <ArrowRight />
             </ButtonLink>
             <ButtonLink href="#architecture" variant="secondary">

@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import { ArrowRight, ButtonLink } from '../components/ui/Button';
 import { WarehouseScene } from '../components/scene/WarehouseScene';
 import { useReducedMotion } from '../hooks/useMotionPrefs';
-import { DEMO_ROUTE } from '../config/endpoints';
+import { OPERATIONS_CONSOLE_URL, PREVIEW_ROUTE } from '../config/endpoints';
 
 export function Hero() {
   const reduced = useReducedMotion();
@@ -31,9 +31,9 @@ export function Hero() {
         <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-b from-transparent to-graphite" />
       </div>
 
-      <div className="relative mx-auto grid w-full max-w-[1200px] grid-cols-1 items-center gap-12 px-5 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-14">
+      <div className="relative mx-auto grid w-full max-w-[1200px] grid-cols-1 items-start gap-12 px-5 sm:px-8 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:gap-14">
         {/* ---- Copy ---- */}
-        <div className="max-w-xl">
+        <div className="min-w-0 max-w-xl lg:pt-3">
           <motion.p
             {...rise(0)}
             className="mb-5 inline-flex items-center gap-2.5 rounded-full border border-cyan/25 bg-cyan/6 px-3.5 py-1.5 font-mono text-[10.5px] font-medium tracking-[0.16em] text-cyan"
@@ -47,7 +47,7 @@ export function Hero() {
             className="text-balance text-[2.15rem] font-semibold leading-[1.08] tracking-[-0.028em] text-ink sm:text-5xl lg:text-[3.4rem]"
           >
             Authorize every action{' '}
-            <span className="relative whitespace-nowrap">
+            <span className="relative">
               before a machine moves
               <span
                 aria-hidden="true"
@@ -67,12 +67,12 @@ export function Hero() {
           </motion.p>
 
           <motion.div {...rise(0.24)} className="mt-8 flex flex-wrap items-center gap-3">
-            <ButtonLink href={DEMO_ROUTE} size="lg">
-              Launch Live Demo
+            <ButtonLink href={OPERATIONS_CONSOLE_URL} size="lg">
+              Open Live Operations Console
               <ArrowRight />
             </ButtonLink>
-            <ButtonLink href="#how-it-works" variant="secondary" size="lg">
-              See How It Works
+            <ButtonLink href={PREVIEW_ROUTE} variant="secondary" size="lg">
+              Interactive Product Preview
             </ButtonLink>
           </motion.div>
 
@@ -81,8 +81,7 @@ export function Hero() {
             className="mt-6 font-mono text-[11.5px] leading-relaxed text-ink-faint"
           >
             Built for autonomous fleets{' '}
-            <span className="mx-1.5 text-hairline-strong">•</span> Validated in NVIDIA Omniverse /
-            Isaac Sim
+            <span className="mx-1.5 text-hairline-strong">•</span> Demonstrated in NVIDIA Isaac Sim
           </motion.p>
         </div>
 
@@ -95,7 +94,7 @@ export function Hero() {
                 animate: { opacity: 1, scale: 1 },
                 transition: { duration: 0.9, delay: 0.15, ease: [0.22, 1, 0.36, 1] as const },
               })}
-          className="relative"
+          className="relative min-w-0"
         >
           <div className="rounded-2xl border border-hairline bg-surface/40 p-3 sm:p-4">
             <div className="mb-3 flex items-center gap-2 border-b border-hairline pb-3">

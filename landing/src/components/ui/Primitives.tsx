@@ -34,7 +34,7 @@ export function statusTone(status?: 'pass' | 'warn' | 'fail' | 'info'): Tone {
   return 'neutral';
 }
 
-/** Small mono evidence chip — used for policy reasons, IDs and scores. */
+/** Small mono evidence chip used for policy reasons, IDs and scores. */
 export function Chip({
   children,
   tone = 'neutral',
