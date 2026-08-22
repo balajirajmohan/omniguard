@@ -269,6 +269,13 @@ teleop_manager = TeleopManager(
     update_mock_manipulator=_update_mock_manipulator,
 )
 
+from backend.action_history import action_history
+from backend.ai_response import ai_engine
+from backend.incident_store import FEEDBACK, incident_store
+from backend.recovery import recovery_manager
+from backend.risk_policy import risk_policy
+from backend.action_anomaly import action_window_detector
+
 
 def reset_state() -> dict[str, Any]:
     # Drop teleop leases first, and outside _LOCK. TeleopManager takes its own
@@ -277,6 +284,8 @@ def reset_state() -> dict[str, Any]:
     # calling into the manager is therefore the reverse of the order every other
     # path uses, and two concurrent requests can deadlock the whole API.
     teleop_manager.reset()
+    action_history.reset_demo_state()
+    incident_store.reset_demo_state()
     with _LOCK:
         STATE.clear()
         STATE.update(initial_state())
@@ -291,6 +300,13 @@ def public_state_unlocked() -> dict[str, Any]:
 def public_state() -> dict[str, Any]:
     with _LOCK:
         return public_state_unlocked()
+
+
+ai_engine.bind(
+    state_provider=public_state,
+    apply_identity_containment=_apply_containment,
+    terminate_session=lambda _robot_id: teleop_manager.reset(),
+)
 
 
 def _append_timeline(steps: list[dict[str, Any]]) -> None:
@@ -568,6 +584,7 @@ def evaluate(
 @app.get("/health")
 def health() -> dict[str, Any]:
     anomaly = detector.status()
+    action_ai = action_window_detector.status()
     return {
         "status": "ok",
         "service": "omniguard",
@@ -576,6 +593,8 @@ def health() -> dict[str, Any]:
         "isaac_bridge_url": os.getenv("ISAAC_BRIDGE_URL", "http://127.0.0.1:8899"),
         "llm": llm_status(),
         "anomaly": anomaly,
+        "action_window_anomaly": action_ai,
+        "risk_policy": risk_policy.status(),
         "ai_enforcement_enabled": AI_ENFORCE,
         "model_available": anomaly.get("available", False),
         "model_degraded": anomaly.get("degraded", False),
@@ -598,6 +617,8 @@ def run_scenario(
     x_omniguard_operator: str | None = Header(default=None),
 ) -> dict[str, Any]:
     require_operator_for_protection_off(protection, x_omniguard_operator)
+    if scenario_id == "valid_identity_malicious_manipulation":
+        return _run_malicious_manipulation_scenario()
     scenario = get_scenario(scenario_id)
     if scenario is None:
         raise HTTPException(status_code=404, detail=f"Unknown scenario: {scenario_id}")
@@ -810,16 +831,247 @@ def investigate() -> dict[str, Any]:
     return result
 
 
+class IncidentFeedbackBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    classification: str
+    notes: str | None = None
+
+
+class RecoveryBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    evidence: dict[str, bool] = Field(default_factory=dict)
+    force_state: str | None = None
+
+
+@app.get("/api/ai/status")
+def ai_status() -> dict[str, Any]:
+    return {
+        "command_anomaly": detector.status(),
+        "action_window_anomaly": action_window_detector.status(),
+        "risk_policy": risk_policy.status(),
+        "llm": llm_status(),
+        "note": (
+            "anomaly_risk_score is an IsolationForest anomaly score, not an "
+            "attack probability. model_confidence is null unless calibrated."
+        ),
+    }
+
+
+@app.get("/api/incidents")
+def list_incidents(limit: int = Query(default=50, ge=1, le=200)) -> list[dict[str, Any]]:
+    return incident_store.list(limit=limit)
+
+
 @app.get("/api/incidents/latest")
 def latest_incident() -> dict[str, Any]:
+    durable = incident_store.list(limit=1)
     with _LOCK:
         for event in STATE["events"]:
             if event.get("final_decision") == "BLOCK":
                 return {
                     "incident": event,
+                    "durable_incident": durable[0] if durable else None,
                     "exported_at": now(),
                 }
-        return {"incident": None, "exported_at": now()}
+        return {
+            "incident": None,
+            "durable_incident": durable[0] if durable else None,
+            "exported_at": now(),
+        }
+
+
+@app.get("/api/incidents/{incident_id}")
+def get_incident(incident_id: str) -> dict[str, Any]:
+    incident = incident_store.get(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return incident
+
+
+@app.post("/api/incidents/{incident_id}/investigate")
+def investigate_incident(
+    incident_id: str,
+    x_omniguard_operator: str | None = Header(default=None),
+) -> dict[str, Any]:
+    if x_omniguard_operator != OPERATOR_TOKEN:
+        raise HTTPException(status_code=401, detail="Operator authorization required")
+    incident = incident_store.get(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    agent = InvestigationAgent(public_state)
+    result = agent.run_v2(incident)
+    incident_store.update_fields(
+        incident_id,
+        status="INVESTIGATING",
+        agent_trace_json=result,
+    )
+    # LLM explanation once per incident (async-style: after containment already done).
+    explanation = explain_incident(
+        {
+            **incident,
+            "reasons": (incident.get("hard_policy") or {}).get("reasons")
+            or [incident.get("playbook") or "incident"],
+            "actions": ((incident.get("containment") or {}).get("acknowledged") or []),
+            "decision_source": incident.get("decision_source"),
+            "anomaly_risk_score": (incident.get("ai_evidence") or {}).get(
+                "anomaly_risk_score"
+            ),
+            "response_playbook": incident.get("playbook"),
+        }
+    )
+    incident_store.update_fields(incident_id, llm_explanation_json=explanation)
+    return {
+        "incident_id": incident_id,
+        "investigation": result,
+        "explanation": explanation,
+    }
+
+
+@app.post("/api/incidents/{incident_id}/feedback")
+def incident_feedback(
+    incident_id: str,
+    body: IncidentFeedbackBody,
+    x_omniguard_operator: str | None = Header(default=None),
+) -> dict[str, Any]:
+    if x_omniguard_operator != OPERATOR_TOKEN:
+        raise HTTPException(status_code=401, detail="Operator authorization required")
+    if body.classification not in FEEDBACK:
+        raise HTTPException(status_code=400, detail="Invalid classification")
+    incident = incident_store.get(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    feedback = {
+        "classification": body.classification,
+        "notes": body.notes,
+        "at": now(),
+    }
+    status = "FALSE_POSITIVE" if body.classification == "FALSE_POSITIVE" else incident["status"]
+    if body.classification == "CONFIRMED_ATTACK" and status not in {"RESOLVED", "RECOVERING"}:
+        status = "AWAITING_VERIFICATION"
+    updated = incident_store.update_fields(
+        incident_id, human_feedback_json=feedback, status=status
+    )
+    return {"ok": True, "incident": updated}
+
+
+@app.post("/api/incidents/{incident_id}/recover")
+def incident_recover(
+    incident_id: str,
+    body: RecoveryBody,
+    x_omniguard_operator: str | None = Header(default=None),
+) -> dict[str, Any]:
+    if x_omniguard_operator != OPERATOR_TOKEN:
+        raise HTTPException(status_code=401, detail="Operator authorization required")
+    if not incident_store.get(incident_id):
+        raise HTTPException(status_code=404, detail="Incident not found")
+    if not body.evidence and not body.force_state:
+        return recovery_manager.start(incident_id)
+    return recovery_manager.advance(
+        incident_id, evidence_updates=body.evidence, force_state=body.force_state
+    )
+
+
+def _run_malicious_manipulation_scenario() -> dict[str, Any]:
+    """valid_identity_malicious_manipulation demonstration sequence."""
+    reset_state()
+    start = teleop_manager.start(
+        {
+            "credential": VALID_TOKEN,
+            "agent_id": "fleet-agent-01",
+            "device_id": KNOWN_DEVICE,
+            "robot_id": "robot-01",
+            "x": 0.0,
+            "y": 0.0,
+            "speed": 0.8,
+        }
+    )
+    if start.get("final_decision") != "ALLOW" or not start.get("control_id"):
+        return {"scenario": "valid_identity_malicious_manipulation", "start": start}
+    cid = start["control_id"]
+    steps: list[dict[str, Any]] = []
+    seq = 0
+
+    def move(x: float, y: float) -> dict[str, Any]:
+        nonlocal seq
+        seq += 1
+        return teleop_manager.move(
+            {
+                "control_id": cid,
+                "sequence": seq,
+                "robot_id": "robot-01",
+                "x": x,
+                "y": y,
+                "speed": 0.8,
+            }
+        )
+
+    steps.append({"action": "BASE_MOVE", "result": move(1.0, 0.0)})
+    steps.append(
+        {
+            "action": "ARM_PRESET_reach",
+            "result": teleop_manager.arm_preset(
+                {"control_id": cid, "robot_id": "robot-01", "preset": "reach"}
+            ),
+        }
+    )
+    steps.append(
+        {
+            "action": "GRIPPER_OPEN",
+            "result": teleop_manager.gripper(
+                {"control_id": cid, "robot_id": "robot-01", "action": "open"}
+            ),
+        }
+    )
+    steps.append(
+        {
+            "action": "GRIPPER_CLOSE",
+            "result": teleop_manager.gripper(
+                {"control_id": cid, "robot_id": "robot-01", "action": "close"}
+            ),
+        }
+    )
+    steps.append(
+        {
+            "action": "ARM_PRESET_carry",
+            "result": teleop_manager.arm_preset(
+                {"control_id": cid, "robot_id": "robot-01", "preset": "carry"}
+            ),
+        }
+    )
+    steps.append({"action": "BASE_MOVE", "result": move(2.0, 0.0)})
+
+    blocked = next(
+        (
+            s
+            for s in steps
+            if s["result"].get("status") == "REJECTED"
+            or s["result"].get("final_decision") == "BLOCK"
+        ),
+        steps[-1],
+    )
+    incidents = incident_store.list(limit=1)
+    return {
+        "scenario": "valid_identity_malicious_manipulation",
+        "final_decision": blocked["result"].get("final_decision")
+        or (
+            "BLOCK"
+            if blocked["result"].get("status") == "REJECTED"
+            else blocked["result"].get("status")
+        ),
+        "decision_source": blocked["result"].get("decision_source"),
+        "hard_policy_would_block": blocked["result"].get("hard_policy_would_block", False),
+        "anomaly_risk_score": blocked["result"].get("anomaly_risk_score"),
+        "caught_by": blocked["result"].get("caught_by"),
+        "response_playbook": blocked["result"].get("response_playbook"),
+        "incident_id": blocked["result"].get("incident_id")
+        or (incidents[0]["incident_id"] if incidents else None),
+        "steps": steps,
+        "policy_decision": blocked["result"].get("policy_decision"),
+        "reasons": blocked["result"].get("reasons") or [],
+        "actions": (incidents[0].get("containment") or {}).get("acknowledged", [])
+        if incidents
+        else [],
+    }
 
 
 @app.get("/api/robots/robot-01/next-command")

@@ -74,7 +74,23 @@ def _fallback(event: dict, *, reason: str = "deterministic_template") -> dict:
         fallback_used=True,
         fallback_reason=reason,
     )
-    return payload.model_dump()
+    data = payload.model_dump()
+    data.update(
+        {
+            "operator_summary": summary,
+            "technical_summary": (
+                f"decision_source={event.get('decision_source')} "
+                f"anomaly_risk_score={event.get('anomaly_risk_score')} "
+                f"playbook={event.get('response_playbook')}"
+            ),
+            "likely_root_cause": (
+                "Action-window behavioural anomaly"
+                if event.get("decision_source") == "action_window_ai"
+                else "Hard-policy or identity violation"
+            ),
+        }
+    )
+    return data
 
 
 def _parse_llm_json(text: str) -> dict | None:

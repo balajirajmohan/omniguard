@@ -108,6 +108,68 @@ class TeleopManager:
     def config(self) -> dict[str, Any]:
         return teleop_config_payload()
 
+    def _ai_gate(
+        self,
+        *,
+        lease: TeleopLease,
+        action_type_value: str,
+        action_payload: dict[str, Any],
+    ) -> tuple[bool, dict[str, Any]]:
+        """Score outside the teleop lock. Returns (allow, enrichment)."""
+        from backend.action_context import ActionType
+        from backend.ai_response import ai_engine
+
+        decision, incident = ai_engine.evaluate_action(
+            action_type=ActionType(action_type_value),
+            agent_id=lease.agent_id,
+            device_id=lease.device_id,
+            robot_id=lease.robot_id,
+            credential=lease.credential,
+            session_id=lease.control_id,
+            action_payload=action_payload,
+            hard_reasons=[],
+            protection_enabled=True,
+        )
+        enrichment = {
+            "decision_source": decision.decision_source,
+            "hard_policy_would_block": decision.hard_policy_would_block,
+            "hard_policy_reasons": decision.hard_policy_reasons,
+            "anomaly_risk_score": decision.anomaly_risk_score,
+            "anomaly_model": decision.anomaly_model,
+            "anomaly_model_version": decision.anomaly_model_version,
+            "anomaly_features": decision.anomaly_features,
+            "ai_mode": decision.ai_mode,
+            "model_confidence": decision.model_confidence,
+            "response_playbook": decision.response_playbook,
+            "final_decision": decision.final_decision,
+            "policy_decision": decision.policy_decision,
+            "caught_by": (
+                "action_window_ai"
+                if decision.decision_source == "action_window_ai"
+                else (
+                    "ai_warning"
+                    if decision.decision_source == "ai_warning"
+                    else "none"
+                )
+            ),
+        }
+        if incident:
+            enrichment["incident_id"] = incident.get("incident_id")
+        if decision.final_decision in {"BLOCK", "HOLD"}:
+            with self._lock:
+                lease.active = False
+            enrichment["status"] = "REJECTED"
+            enrichment["reasons"] = (
+                [f"AI_{decision.final_decision}", decision.response_playbook or ""]
+                if decision.decision_source in {"action_window_ai", "ai_warning"}
+                else [decision.final_decision]
+            )
+            enrichment["reasons"] = [r for r in enrichment["reasons"] if r]
+            enrichment["control_id"] = lease.control_id
+            enrichment["robot_id"] = lease.robot_id
+            return False, enrichment
+        return True, enrichment
+
     def start(self, payload: dict[str, Any]) -> dict[str, Any]:
         credential = str(payload.get("credential", ""))
         agent_id = str(payload.get("agent_id", "fleet-agent-01"))
@@ -354,6 +416,26 @@ class TeleopManager:
                 sequence=sequence,
             )
 
+        with self._lock:
+            lease = self._by_id.get(control_id)
+        if lease is None:
+            return {
+                "status": "REJECTED",
+                "reasons": ["UNKNOWN_OR_MISMATCHED_LEASE"],
+                "control_id": control_id,
+                "sequence": sequence,
+            }
+
+        allow, enrich = self._ai_gate(
+            lease=lease,
+            action_type_value="BASE_MOVE",
+            action_payload={"x": x, "y": y, "speed": speed, "zone": zone},
+        )
+        if not allow:
+            enrich["sequence"] = sequence
+            enrich["zone"] = zone
+            return enrich
+
         actuation = maybe_actuate_move_xy(robot_id, x, y, speed)
         command_id = None
         status = "EXECUTED"
@@ -383,6 +465,7 @@ class TeleopManager:
             "control_id": control_id,
             "sequence": sequence,
             "zone": zone,
+            **{k: v for k, v in enrich.items() if k not in {"status", "reasons"}},
         }
 
     def arm_preset(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -401,8 +484,25 @@ class TeleopManager:
         if rejection is not None:
             return rejection
 
+        with self._lock:
+            lease = self._by_id.get(control_id)
+        if lease is None:
+            return {
+                "status": "REJECTED",
+                "reasons": ["UNKNOWN_OR_MISMATCHED_LEASE"],
+                "control_id": control_id,
+                "robot_id": robot_id,
+            }
+        allow, enrich = self._ai_gate(
+            lease=lease,
+            action_type_value="ARM_PRESET",
+            action_payload={"preset": preset},
+        )
+        if not allow:
+            return enrich
+
         actuation = maybe_actuate_arm_preset(robot_id, preset)
-        return self._aux_actuation_result(
+        result = self._aux_actuation_result(
             control_id=control_id,
             robot_id=robot_id,
             kind="arm_preset",
@@ -410,6 +510,8 @@ class TeleopManager:
             actuation=actuation,
             extra={"preset": preset},
         )
+        result.update({k: v for k, v in enrich.items() if k not in result})
+        return result
 
     def arm_joints(self, payload: dict[str, Any]) -> dict[str, Any]:
         control_id = str(payload.get("control_id", ""))
@@ -438,8 +540,25 @@ class TeleopManager:
         if rejection is not None:
             return rejection
 
+        with self._lock:
+            lease = self._by_id.get(control_id)
+        if lease is None:
+            return {
+                "status": "REJECTED",
+                "reasons": ["UNKNOWN_OR_MISMATCHED_LEASE"],
+                "control_id": control_id,
+                "robot_id": robot_id,
+            }
+        allow, enrich = self._ai_gate(
+            lease=lease,
+            action_type_value="ARM_JOINTS",
+            action_payload={"targets_degrees": targets_degrees},
+        )
+        if not allow:
+            return enrich
+
         actuation = maybe_actuate_arm_joints(robot_id, targets_degrees)
-        return self._aux_actuation_result(
+        result = self._aux_actuation_result(
             control_id=control_id,
             robot_id=robot_id,
             kind="arm_joints",
@@ -447,6 +566,8 @@ class TeleopManager:
             actuation=actuation,
             extra={"targets_degrees": targets_degrees},
         )
+        result.update({k: v for k, v in enrich.items() if k not in result})
+        return result
 
     def gripper(self, payload: dict[str, Any]) -> dict[str, Any]:
         control_id = str(payload.get("control_id", ""))
@@ -464,8 +585,26 @@ class TeleopManager:
         if rejection is not None:
             return rejection
 
+        with self._lock:
+            lease = self._by_id.get(control_id)
+        if lease is None:
+            return {
+                "status": "REJECTED",
+                "reasons": ["UNKNOWN_OR_MISMATCHED_LEASE"],
+                "control_id": control_id,
+                "robot_id": robot_id,
+            }
+        action_type = "GRIPPER_OPEN" if action == "open" else "GRIPPER_CLOSE"
+        allow, enrich = self._ai_gate(
+            lease=lease,
+            action_type_value=action_type,
+            action_payload={"action": action},
+        )
+        if not allow:
+            return enrich
+
         actuation = maybe_actuate_gripper(robot_id, action)
-        return self._aux_actuation_result(
+        result = self._aux_actuation_result(
             control_id=control_id,
             robot_id=robot_id,
             kind="gripper",
@@ -473,6 +612,8 @@ class TeleopManager:
             actuation=actuation,
             extra={"action": action},
         )
+        result.update({k: v for k, v in enrich.items() if k not in result})
+        return result
 
     def stop(self, payload: dict[str, Any]) -> dict[str, Any]:
         control_id = str(payload.get("control_id", ""))

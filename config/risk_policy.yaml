@@ -1,0 +1,33 @@
+version: action-risk-policy-v1
+
+warning_risk: 0.60
+critical_risk: 0.80
+
+# Absolute hard-policy controls cannot be disabled by this file.
+ai_cannot_bypass_hard_policy: true
+
+actions:
+  BASE_MOVE:
+    # Joystick packets are frequent; observe by default so normal teleop is not
+    # blocked by window scoring. Arm/gripper enforce catches manipulation sequences.
+    ai_mode: observe
+  BASE_STOP:
+    ai_mode: observe
+  ARM_PRESET:
+    ai_mode: enforce
+  ARM_JOINTS:
+    ai_mode: enforce
+  GRIPPER_OPEN:
+    ai_mode: enforce
+  GRIPPER_CLOSE:
+    ai_mode: enforce
+
+warning_decision: HOLD
+critical_decision: BLOCK
+
+llm:
+  max_calls_per_incident: 2
+  max_agent_rounds: 5
+
+incident:
+  correlation_window_seconds: 120

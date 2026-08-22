@@ -1,0 +1,384 @@
+{
+  "model_name": "IsolationForest",
+  "model_version": "action-window-iforest-v1",
+  "feature_names": [
+    "move_count_10s",
+    "arm_count_10s",
+    "gripper_count_10s",
+    "action_switch_count_10s",
+    "maximum_speed",
+    "average_speed",
+    "zone_transition_count",
+    "gripper_toggle_count",
+    "first_arm_use_for_identity",
+    "first_gripper_use_for_identity",
+    "previous_failures",
+    "hour_of_day",
+    "seconds_since_last_action"
+  ],
+  "trained_on": "synthetic_normal_action_windows_only",
+  "dataset_label": "synthetic",
+  "n_training_samples": 4000,
+  "n_eval_samples": 48,
+  "contamination": 0.04,
+  "random_state": 21,
+  "trained_at": "2026-08-22T04:56:02.039278+00:00",
+  "critical_risk_threshold": 0.8,
+  "warning_risk_threshold": 0.6,
+  "model_sha256": "6d2154ab38e9fc72495c243a73ee9a0d06e64496d3ac71acd60e31000be5bddd",
+  "dependency_versions": {
+    "python": "3.12.4",
+    "numpy": "2.5.2",
+    "scikit_learn": "1.9.0",
+    "joblib": "1.5.3"
+  },
+  "eval_metrics": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "false_positive_rate": 0.0,
+    "tp": 0,
+    "fp": 0,
+    "tn": 40,
+    "fn": 8,
+    "note": "Eval includes valid-identity malicious manipulation windows. Not production validation."
+  },
+  "eval_results": [
+    {
+      "scenario": "eval_normal_0",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.22,
+      "raw_score": 0.10545664337453042
+    },
+    {
+      "scenario": "eval_normal_1",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.23,
+      "raw_score": 0.09917719423935456
+    },
+    {
+      "scenario": "eval_normal_2",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.2,
+      "raw_score": 0.12122037998511592
+    },
+    {
+      "scenario": "eval_normal_3",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.19,
+      "raw_score": 0.12874454702268257
+    },
+    {
+      "scenario": "eval_normal_4",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.25,
+      "raw_score": 0.08460879262938936
+    },
+    {
+      "scenario": "eval_normal_5",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.34,
+      "raw_score": 0.03280588693875364
+    },
+    {
+      "scenario": "eval_normal_6",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.25,
+      "raw_score": 0.08925234674869764
+    },
+    {
+      "scenario": "eval_normal_7",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.25,
+      "raw_score": 0.08415492713590234
+    },
+    {
+      "scenario": "eval_normal_8",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.3,
+      "raw_score": 0.05690373550244254
+    },
+    {
+      "scenario": "eval_normal_9",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.4,
+      "raw_score": -0.0014980022417609984
+    },
+    {
+      "scenario": "eval_normal_10",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.24,
+      "raw_score": 0.09284292595165866
+    },
+    {
+      "scenario": "eval_normal_11",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.29,
+      "raw_score": 0.06424678744040246
+    },
+    {
+      "scenario": "eval_normal_12",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.24,
+      "raw_score": 0.09686409728699952
+    },
+    {
+      "scenario": "eval_normal_13",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.26,
+      "raw_score": 0.07841433127735109
+    },
+    {
+      "scenario": "eval_normal_14",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.31,
+      "raw_score": 0.051415817928168406
+    },
+    {
+      "scenario": "eval_normal_15",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.2,
+      "raw_score": 0.12488270791777273
+    },
+    {
+      "scenario": "eval_normal_16",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.25,
+      "raw_score": 0.08718766698448788
+    },
+    {
+      "scenario": "eval_normal_17",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.29,
+      "raw_score": 0.06144024517794622
+    },
+    {
+      "scenario": "eval_normal_18",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.25,
+      "raw_score": 0.08419918389025516
+    },
+    {
+      "scenario": "eval_normal_19",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.23,
+      "raw_score": 0.09862727402146954
+    },
+    {
+      "scenario": "eval_normal_20",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.31,
+      "raw_score": 0.047338635051515254
+    },
+    {
+      "scenario": "eval_normal_21",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.29,
+      "raw_score": 0.05987602273395376
+    },
+    {
+      "scenario": "eval_normal_22",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.27,
+      "raw_score": 0.07605869962196399
+    },
+    {
+      "scenario": "eval_normal_23",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.37,
+      "raw_score": 0.016209484655725026
+    },
+    {
+      "scenario": "eval_normal_24",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.39,
+      "raw_score": 0.0057632129290267065
+    },
+    {
+      "scenario": "eval_normal_25",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.32,
+      "raw_score": 0.044542250411097384
+    },
+    {
+      "scenario": "eval_normal_26",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.3,
+      "raw_score": 0.053708386568059874
+    },
+    {
+      "scenario": "eval_normal_27",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.34,
+      "raw_score": 0.031690358949914454
+    },
+    {
+      "scenario": "eval_normal_28",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.3,
+      "raw_score": 0.05443367667524901
+    },
+    {
+      "scenario": "eval_normal_29",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.27,
+      "raw_score": 0.07639717228661835
+    },
+    {
+      "scenario": "eval_normal_30",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.21,
+      "raw_score": 0.11730275438314852
+    },
+    {
+      "scenario": "eval_normal_31",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.18,
+      "raw_score": 0.13963113613127698
+    },
+    {
+      "scenario": "eval_normal_32",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.22,
+      "raw_score": 0.11015035141732238
+    },
+    {
+      "scenario": "eval_normal_33",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.22,
+      "raw_score": 0.1101758545754074
+    },
+    {
+      "scenario": "eval_normal_34",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.24,
+      "raw_score": 0.09142561309366304
+    },
+    {
+      "scenario": "eval_normal_35",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.24,
+      "raw_score": 0.09304639362101874
+    },
+    {
+      "scenario": "eval_normal_36",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.22,
+      "raw_score": 0.11100377855870686
+    },
+    {
+      "scenario": "eval_normal_37",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.34,
+      "raw_score": 0.03282081027060613
+    },
+    {
+      "scenario": "eval_normal_38",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.37,
+      "raw_score": 0.015053645094634582
+    },
+    {
+      "scenario": "eval_normal_39",
+      "label": 0,
+      "predicted_anomaly": false,
+      "risk": 0.26,
+      "raw_score": 0.07840760501807298
+    },
+    {
+      "scenario": "malicious_manip_0",
+      "label": 1,
+      "predicted_anomaly": false,
+      "risk": 0.42,
+      "raw_score": -0.00914125793264009
+    },
+    {
+      "scenario": "malicious_manip_1",
+      "label": 1,
+      "predicted_anomaly": false,
+      "risk": 0.43,
+      "raw_score": -0.01561898930479455
+    },
+    {
+      "scenario": "malicious_manip_2",
+      "label": 1,
+      "predicted_anomaly": false,
+      "risk": 0.47,
+      "raw_score": -0.03403536665810292
+    },
+    {
+      "scenario": "malicious_manip_3",
+      "label": 1,
+      "predicted_anomaly": false,
+      "risk": 0.5,
+      "raw_score": -0.05228143771803773
+    },
+    {
+      "scenario": "malicious_manip_4",
+      "label": 1,
+      "predicted_anomaly": false,
+      "risk": 0.48,
+      "raw_score": -0.039989572100537774
+    },
+    {
+      "scenario": "malicious_manip_5",
+      "label": 1,
+      "predicted_anomaly": false,
+      "risk": 0.45,
+      "raw_score": -0.026698664857393806
+    },
+    {
+      "scenario": "malicious_manip_6",
+      "label": 1,
+      "predicted_anomaly": false,
+      "risk": 0.47,
+      "raw_score": -0.037240652843858246
+    },
+    {
+      "scenario": "malicious_manip_7",
+      "label": 1,
+      "predicted_anomaly": false,
+      "risk": 0.47,
+      "raw_score": -0.035839785515843436
+    }
+  ],
+  "judge_note": "anomaly_risk_score is an IsolationForest anomaly score, not an attack probability. model_confidence is null (uncalibrated)."
+}
