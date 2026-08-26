@@ -46,7 +46,7 @@ The browser communicates only with the OmniGuard API. It never receives the Isaa
 
 ## Run locally
 
-Requirements: Python 3.10 or later, Node.js 20.19 or later, and a Bash-compatible shell. Isaac Sim is optional.
+Requirements: Python 3.10 or later, Node.js 20.19 or later, and a Bash-compatible shell. Isaac Sim is required.
 
 ### 1. Start the API and local robot
 
