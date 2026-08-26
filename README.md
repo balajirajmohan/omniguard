@@ -1,179 +1,121 @@
 # OmniGuard
 
-Browser-operated cyber-physical red-team range for robot identity attacks inside an NVIDIA Isaac Sim digital twin.
+Runtime security and governance for autonomous robots and physical AI.
 
-A stolen fleet credential may still authenticate. OmniGuard checks identity context, Zero-Trust policy and behavioural anomaly risk, then **deterministically** blocks, stops, revokes and quarantines before unsafe motion becomes a physical incident.
+OmniGuard sits between a controller and a robot. Before a machine moves, it evaluates the credential, agent, device, robot, physical zone, speed, and behavioral context. Unsafe commands can be blocked and contained through credential revocation, identity quarantine, session termination, and an emergency stop.
 
-> NVIDIA provides the physically accurate world. OmniGuard turns it into a cyber-physical red-team range.
+This repository is a hackathon prototype that runs with either a local fake robot or an NVIDIA Isaac Sim digital twin.
 
-## Status (honest)
+## Purpose
 
-| Layer                                | Status                                                            |
-| ------------------------------------ | ----------------------------------------------------------------- |
-| Zero-Trust policy + containment      | Working                                                           |
-| IsolationForest anomaly risk         | Working                                                           |
-| Four-button + scenario dashboard     | Working (browser)                                                 |
-| Fake-robot laptop path               | Working (no GPU)                                                  |
-| Isaac Sim 6.0.1 move / e-stop bridge | Proven on AWS L40S (`:8899`); new composite awaits GPU acceptance |
-| Real Claude / OpenAI explanation     | Optional via env; defaults to labeled fallback                    |
-| Mac browser via SSM port-forward     | Documented — run on operator laptop                               |
-| Production IAM / fleet controller    | Out of scope for hackathon                                        |
+A robot credential can be valid and still be misused. A stolen or replayed credential may pass traditional authentication while requesting an unsafe action from a rogue device or through an abnormal control sequence.
 
-**Safety boundary:** AI may score and explain. Physical stop, revoke and quarantine stay in deterministic allowlisted code. An LLM never issues robot movement commands.
+OmniGuard demonstrates continuous authorization for physical systems: every command is checked at runtime, behavioral anomalies are scored, and deterministic containment is applied before cyber risk becomes a physical incident.
 
-## Architecture
+For the hackathon, the project provides a safe cyber-physical red-team range. The core demo shows:
 
-```text
-Mac browser (preferred operator UI)
-  -> AWS SSM port-forward localhost:8501
-  -> Streamlit dashboard on EC2
-  -> FastAPI OmniGuard API :8000
-  -> policy + IsolationForest (+ optional LLM explanation)
-  -> Isaac actuation adapter
-  -> Isaac CommandBridge :8899
-  -> iw.hub + UR10e + Robotiq 2F-140 in Isaac Sim
-```
+- A valid credential used from an unknown controller to target a restricted human zone at unsafe speed.
+- Individually valid base, arm, and gripper actions forming an abnormal manipulation sequence that hard rules alone would miss.
+- The difference between an unprotected command path and OmniGuard enforcement.
 
-Laptop / CI path uses the same API with `simulator/fake_robot.py` instead of Isaac.
+## How it works
 
-## Two preserved API paths
+![OmniGuard operator console](assets/flow.png)
 
-| Path                                | Port     | Role                                                                      |
-| ----------------------------------- | -------- | ------------------------------------------------------------------------- |
-| **Primary demo** `backend.main:app` | **8000** | Four-button + scenario catalog, anomaly, incident AI, optional Isaac push |
-| **JWT broker** `broker.main:app`    | **8001** | Srikanth JWT `/token` + `/command`, replay/burst, `robot_adapter`         |
+Safety-critical actions remain in deterministic, allowlisted code. AI scores behavior, while an optional LLM only explains incidents after containment. Neither can override hard policy or directly issue robot movement commands.
 
-## Quick start — laptop (no GPU)
+Implemented capabilities include:
+
+- Zero-Trust checks for credential state, agent, device, robot, geofence, and speed.
+- Behavioral scoring for individual commands and multi-action manipulation windows.
+- Teleoperation leases, sequence validation, rate limits, and a deadman stop.
+- Attack scenarios covering rogue devices, geofencing, overspeed, bursts, replay, AI-only anomalies, and malicious manipulation.
+- Deterministic containment playbooks and durable incident evidence with investigation, feedback, and simulated recovery.
+- Mock and Isaac Sim adapters behind an authenticated command bridge.
+
+The browser communicates only with the OmniGuard API. It never receives the Isaac bridge credential or controls the simulator directly.
+
+## Target industries and use cases
+
+| Industry | Use case |
+| --- | --- |
+| Warehousing and logistics | Protect AMR fleets from rogue control, restricted-zone entry, replay, and unsafe speed. |
+| Manufacturing | Govern mobile manipulators and robotic-cell actions using identity and safety context. |
+| Healthcare robotics | Constrain service robots to approved areas and detect unusual behavior. |
+| Critical infrastructure | Control autonomous inspection systems where incorrect actions could disrupt essential operations. |
+
+## Run locally
+
+Requirements: Python 3.10 or later, Node.js 20.19 or later, and a Bash-compatible shell. Isaac Sim is optional.
+
+### 1. Start the API and local robot
+
+From the repository root:
 
 ```bash
 bash scripts/setup.sh
-# or on AWS: bash scripts/getomni.sh
 bash scripts/run_demo.sh
+```
+
+This starts the API, fake robot, and Streamlit fallback dashboard.
+
+| Service | Address |
+| --- | --- |
+| Streamlit dashboard | http://127.0.0.1:8501 |
+| API documentation | http://127.0.0.1:8000/docs |
+| API health | http://127.0.0.1:8000/health |
+
+Keep this terminal running.
+
+### 2. Start the live operator console
+
+In a second terminal:
+
+```bash
+cd ui-controller
+npm ci
+npm run dev
+```
+
+Open http://127.0.0.1:5173. The console provides legitimate and rogue control planes, keyboard and gamepad input, scenarios, decision traces, incident review, and session export.
+
+### Optional paths
+
+- Product site: run `npm ci && npm run dev` in `landing/`, then open http://localhost:5174. Its `/demo` route is a scripted preview by default.
+- Isaac Sim: launch the bridge from `isaac/warehouse_robot_demo.py`, then run `bash scripts/run_isaac_services.sh`. See [isaac/README.md](isaac/README.md).
+- Signed-JWT broker: run `bash scripts/run_jwt_broker.sh` to start the separate broker on port `8001`.
+
+## Demo
+
+![OmniGuard operator console](assets/demo1.gif)
+
+![OmniGuard operator console](assets/demo2.gif)
+
+## Test
+
+```bash
+source .venv/bin/activate
 pytest -q
+
+cd ui-controller
+npm test
+npm run build
 ```
 
-| Surface   | URL                        |
-| --------- | -------------------------- |
-| Dashboard | http://127.0.0.1:8501      |
-| API docs  | http://127.0.0.1:8000/docs |
-
-Judge buttons: **Reset** · **Normal** · **Attack - Protection OFF** · **Attack - OmniGuard ON**
-
-Also available in the UI: scenario library (rogue device, geofence, speed, burst, combined, revoked replay).
-
-## Isaac path (AWS GPU / DCV)
-
-1. Close extra Isaac GUIs — keep one scene.
-2. From a **DCV** terminal (needs `DISPLAY`):
-
-```bash
-/opt/IsaacSim/python.sh /home/ubuntu/omniguard/isaac/warehouse_robot_demo.py
-# wait for: OmniGuard Isaac bridge listening on :8899
-```
-
-3. In another shell (do **not** use `run_demo.sh` — it starts the fake robot):
-
-```bash
-bash scripts/run_isaac_services.sh
-```
-
-4. From your Mac, forward the dashboard: [docs/MAC_ACCESS.md](docs/MAC_ACCESS.md)
-
-Isaac Sim **6.0.1** robot assets (committed):
+## Project layout
 
 ```text
-/Isaac/Robots/Idealworks/iwhub/iw_hub.usd
-/Isaac/Robots/UniversalRobots/ur10e/ur10e.usd
-/Isaac/Robots/Robotiq/2F-140/Robotiq_2F_140_config.usd
+backend/        policy, AI scoring, teleoperation, containment, incidents
+ui-controller/ live React operator and red-team console
+dashboard/      Streamlit fallback dashboard
+simulator/      local fake robot
+isaac/          Isaac Sim warehouse and command bridge
+broker/         optional JWT command broker
+landing/        product site and scripted preview
+scripts/        setup, launch, training, and demo utilities
+tests/          backend, UI, containment, and bridge tests
 ```
 
-The script assembles these bundled assets at runtime. See
-[`isaac/README.md`](isaac/README.md) for mount overrides and the required GPU
-visual/MOVE/STOP acceptance checks.
+## Scope
 
-## Optional LLM explanation
-
-Default on `main` is **fallback** (deterministic template). Live LLM is off until
-you set a provider in local `.env` (never commit real keys — `.env` is gitignored).
-
-```bash
-# Hackathon OpenRouter — OmniGuard team (Claude Sonnet 4.6)
-cp .env.example .env
-# Edit .env on the machine only:
-#   LLM_PROVIDER=openrouter
-#   OPENROUTER_API_KEY=<your team key>
-#   OPENROUTER_MODEL=anthropic/claude-sonnet-4.6
-
-# Direct OpenAI:
-# export LLM_PROVIDER=openai
-# export OPENAI_API_KEY=...
-# export OPENAI_MODEL=gpt-4o-mini
-
-# Bedrock:
-# export LLM_PROVIDER=bedrock
-# export BEDROCK_MODEL_ID=...
-# export AWS_REGION=...
-```
-
-UI discloses provider/model and whether fallback was used. The LLM only explains
-incidents after containment; it never moves the robot.
-
-## JWT broker (preserved)
-
-```bash
-bash scripts/run_jwt_broker.sh
-BROKER_URL=http://127.0.0.1:8001 python scripts/normal_client.py
-BROKER_URL=http://127.0.0.1:8001 python scripts/attack_client.py
-```
-
-## Decision scheme (primary backend)
-
-```text
-Protection OFF              -> ALLOW (unsafe comparison for judges)
-Hard policy violation       -> BLOCK + contain
-AI risk >= 0.80             -> BLOCK + contain (unknown behavioral threat)
-AI risk 0.60–0.79           -> HOLD
-AI risk < 0.60              -> ALLOW
-OMNIGUARD_AI_ENFORCE=false  -> AI scores in shadow mode (no block)
-```
-
-### Judge AI narrative (rules vs ML)
-
-1. **Learn normal** — IsolationForest trained only on synthetic normal fleet commands (`scripts/generate_training_data.py` + `scripts/train_anomaly_model.py`).
-2. **Normal** — rules pass, low AI risk → ALLOW.
-3. **Known compromise** — rogue device / restricted zone / excessive speed → hard policy DENY (AI also high).
-4. **Unknown anomaly** — valid token, known device, allowed zone, speed under max → rules would allow; AI risk blocks (`/api/demo/anomaly`).
-
-> Rules stop known unsafe actions. AI learns normal fleet behavior and surfaces attacks we did not pre-program. An LLM may explain afterward; it never moves the robot.
-
-```bash
-python scripts/generate_training_data.py
-python scripts/train_anomaly_model.py
-```
-
-## Repo layout
-
-```text
-backend/     primary demo API, scenarios, anomaly, incident AI
-broker/      JWT broker + robot_adapter (preserved)
-dashboard/   Streamlit operator UI
-simulator/   fake_robot (+ poll contract)
-isaac/       CommandBridge + mobile-manipulator assembly + warehouse demo
-scripts/     setup, run_demo, run_isaac_services, getomni, JWT clients
-docs/        RUNBOOK, MAC_ACCESS, ALIGNMENT, demo script
-tests/       FastAPI contract tests
-```
-
-## Docs
-
-- [docs/RUNBOOK.md](docs/RUNBOOK.md) — event plan
-- [docs/MAC_ACCESS.md](docs/MAC_ACCESS.md) — Mac → EC2 via SSM
-- [docs/ALIGNMENT.md](docs/ALIGNMENT.md) — dual-path reconciliation
-- [docs/demo-script.md](docs/demo-script.md)
-- [isaac/README.md](isaac/README.md)
-
-## Judge line
-
-> OmniGuard executes attack scenarios against an Isaac Sim digital twin, uses behavioural risk and zero-trust context to detect compromised control, and performs policy-constrained containment before the same failure can reach live hardware.
-
-AI detects and explains; deterministic code performs the safety-critical block, stop and credential revocation.
+OmniGuard is a demonstrator, not a production robot safety system or certified controller. The default API uses local demo credentials and should remain on a private development machine. Production use would require hardened device identity, fleet-specific adapters, distributed state, network isolation, and independent safety certification.
